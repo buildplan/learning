@@ -1,4 +1,3 @@
-```markdown
 # Setting up UFW Firewall on Ubuntu Server
 
 This guide provides a comprehensive walkthrough of setting up and configuring the Uncomplicated Firewall (UFW) on an Ubuntu server. UFW is a user-friendly interface to iptables, making firewall management much simpler.
@@ -194,7 +193,4 @@ Reset UFW (removes all rules):
 
 ```bash
 sudo ufw reset
-```
-
-This comprehensive guide helps you effectively manage your Ubuntu server's firewall using UFW. Remember to configure your firewall according to your specific server requirements.
 ```
