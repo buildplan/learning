@@ -1,4 +1,4 @@
-# change ssh-port ubuntu 24.04
+# change ssh port ubuntu 24.04
 
 Change default port by editing this file
 ```
