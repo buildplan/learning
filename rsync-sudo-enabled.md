@@ -1,4 +1,3 @@
-```markdown
 # Creating a Remote User with Elevated Rsync Permissions
 
 ## Prerequisites
