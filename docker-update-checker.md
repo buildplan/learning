@@ -1,4 +1,6 @@
-Yes, absolutely! Let's implement the ability to check logs for a specific container using the `logs <container_name>` argument. Here's the updated script:
+
+## Implement the ability to monitor docker containers, check logs and Discord alets.
+
 
 ```bash
 #!/bin/bash
