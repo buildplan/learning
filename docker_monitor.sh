@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # --- Configuration ---
-DISCORD_WEBHOOK_URL="YOUR_DISCORD_WEBHOOK_URL_HERE"
-CONTAINER_NAMES=("pangolin" "gerbil" "traefik")
+DISCORD_WEBHOOK_URL="YOUR_DISCORD_WEBHOOK_URL_HERE" # change this with actual webhook url.
+CONTAINER_NAMES=("container1" "container1" "container1") # change this with container names to be monitoered.
 LOG_LINES_TO_CHECK=20
 CHECK_FREQUENCY_MINUTES=5
 
