@@ -4,7 +4,7 @@
 ### This can also send alerts on Discord with Discord Webhook API. 
 
 
-```
+```bash
 #!/usr/bin/env bash
 
 # Set strict error handling for better script safety
@@ -327,7 +327,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     main "$@"
 fi
 
-```
+```bash
 
 
 2.  Make it executable:
