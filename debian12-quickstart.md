@@ -1,4 +1,4 @@
-Debian Server Quick Start (April 28, 2025)
+## Debian Server Quick Start (April 2025)
 
     Initial Root Access: Log in to your new Debian server using the root account provided by your hosting provider.
 
@@ -39,7 +39,7 @@ Bash
 
 apt update
 apt install -y ufw
-ufw allow 5595/tcp
+ufw allow 5599/tcp
 ufw default deny incoming
 ufw default allow outgoing
 ufw enable
@@ -52,7 +52,7 @@ Change SSH Port:
 
 sudo nano /etc/ssh/sshd_config
 
-Uncomment or add Port 5595.
+Uncomment or add Port 5599.
 Save and close the file.
 Restart SSH service:
 Bash
@@ -130,7 +130,7 @@ Basic Security Hardening:
 
     Disable unnecessary services: List running services with systemctl list-unit-files --state=enabled. Disable any services you don't need using sudo systemctl disable <service_name>.
     Keep software up to date: Regularly run sudo apt update && sudo apt upgrade.
-    Review open ports: Use netstat -tuln or ss -tuln to see what ports are listening. Ensure only necessary ports are open (in your case, likely just 5595 for SSH).
+    Review open ports: Use netstat -tuln or ss -tuln to see what ports are listening. Ensure only necessary ports are open (in your case, likely just 5599 for SSH).
 
 Initial Backup Strategy Planning: Decide on a backup solution from the start. This could involve:
 
