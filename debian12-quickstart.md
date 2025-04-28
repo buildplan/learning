@@ -12,7 +12,7 @@ Set a strong, unique password for this new user when prompted.
 Set Up SSH Key-Based Authentication (Highly Recommended):
 On your local machine: Generate an SSH key pair if you don't have one already:
 
-`ssh-keygen -t rsa -b 4096`
+```ssh-keygen -t rsa -b 4096```
 
 This will create a private key (e.g., ~/.ssh/id_rsa) and a public key (e.g., ~/.ssh/id_rsa.pub). Keep the private key secure and do not share it.
 On the Debian server:
