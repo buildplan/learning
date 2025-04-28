@@ -62,67 +62,70 @@ Disable Root SSH Login and Password Authentication:
 
     Edit /etc/ssh/sshd_config:
     
-
+```
 sudo nano /etc/ssh/sshd_config
-
+```
+```
 Set PermitRootLogin no.
 Set PasswordAuthentication no.
 Save and close the file.
 Restart SSH service:
-
-
+```
+```
     sudo systemctl restart sshd
+```
 
 Set Hostname and Pretty Hostname:
 
-
+```
 sudo hostnamectl set-hostname your-chosen-hostname
 sudo hostnamectl set-hostname "Your Pretty Hostname" --pretty
 sudo nano /etc/hosts # Update the line with 127.0.0.1 to include the new hostname
-
+```
 Set Timezone (Current Time in London is 2:46 PM BST):
 
-
+```
 sudo timedatectl set-timezone Europe/London
-
+```
 Configure Locale:
 
-
+```
 sudo dpkg-reconfigure locales
-
+```
 Install Essential Utilities (Recommended):
 
-
+```
 sudo apt update
 sudo apt install -y vim curl wget net-tools tmux htop apt-transport-https ca-certificates gnupg
-
+```
+```
     apt-transport-https, ca-certificates, gnupg: Often needed for adding external repositories securely.
-
+```
 Set Up Automated Security Updates:
 
-
+```
 sudo apt install -y unattended-upgrades apt-listchanges
 sudo dpkg-reconfigure unattended-upgrades
-
+```
 Carefully review the options and ensure that security updates are set to be installed automatically. You can further customize the behavior by editing /etc/apt/apt.conf.d/50unattended-upgrades. Pay attention to the Unattended-Upgrade::Allowed-Origins section.
 
 Basic System Information Check: Get familiar with commands like:
 
-
+```
 uname -a
 lsb_release -a
 df -h
 free -h
-
+```
 Consider Installing Fail2ban: This tool helps protect your server from brute-force attacks.
 
-
+```
 sudo apt update
 sudo apt install -y fail2ban
 sudo systemctl enable fail2ban
 sudo systemctl start fail2ban
 sudo fail2ban-client status # Check its status
-
+```
 You might want to configure the /etc/fail2ban/jail.conf or create a local configuration file in /etc/fail2ban/jail.d/ to customize the rules (e.g., for SSH on the new port).
 
 Basic Security Hardening:
