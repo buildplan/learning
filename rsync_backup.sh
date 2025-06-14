@@ -74,7 +74,7 @@ fi
 "$ECHO_CMD" "============================================================" >> "$LOG_FILE"
 "$ECHO_CMD" "[$("$DATE_CMD" '+%Y-%m-%d %H:%M:%S')] Starting rsync backup for ${HOSTNAME}" >> "$LOG_FILE"
 
-if "$RSYNC_CMD" -avz --delete --exclude-from="$EXCLUDE_FROM" -e "ssh -p $SSH_PORT" "$LOCAL_DIR" "$HETZNER_BOX":"$BOX_DIR" >> "$LOG_FILE" 2>&1
+if "$RSYNC_CMD" -avz --delete --partial --timeout=60 --exclude-from="$EXCLUDE_FROM" -e "ssh -p $SSH_PORT" "$LOCAL_DIR" "$HETZNER_BOX":"$BOX_DIR" >> "$LOG_FILE" 2>&1
 then
     # --- SUCCESS ---
     "$ECHO_CMD" "[$("$DATE_CMD" '+%Y-%m-%d %H:%M:%S')] SUCCESS: rsync completed successfully." >> "$LOG_FILE"
