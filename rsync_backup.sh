@@ -103,11 +103,16 @@ if "$RSYNC_CMD" -avz --stats --delete --partial --timeout=60 --exclude-from="$EX
 then
     # --- SUCCESS ---
     "$ECHO_CMD" "[$("$DATE_CMD" '+%Y-%m-%d %H:%M:%S')] SUCCESS: rsync completed successfully." >> "$LOG_FILE"
+    
     BACKUP_STATS=$(grep -E 'Number of files transferred|Total file size' "$LOG_FILE" | tail -n 2 || true)
+    
     if [ -z "$BACKUP_STATS" ]; then
         BACKUP_STATS="See log for details."
     fi
-    send_ntfy "✅ Backup SUCCESS: ${HOSTNAME}" "white_check_mark" "default" -d $"rsync backup completed successfully.\n\n${BACKUP_STATS}"
+
+    SUCCESS_MSG=$"rsync backup completed successfully.\n\n${BACKUP_STATS}"
+    
+    send_ntfy "✅ Backup SUCCESS: ${HOSTNAME}" "white_check_mark" "default" "${SUCCESS_MSG}"
 else
     # --- FAILURE ---
     EXIT_CODE=$?
