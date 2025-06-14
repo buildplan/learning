@@ -30,21 +30,21 @@ set -Euo pipefail
 # Set a secure umask for files created by this script (e.g., logs, locks).
 umask 077
 
-# --- Paths to Commands (Verify with 'which <command>') ---
-RSYNC_CMD="/usr/bin/rsync"
-CURL_CMD="/usr/bin/curl"
-FLOCK_CMD="/usr/bin/flock"
-HOSTNAME_CMD="/usr/bin/hostname"
-CUT_CMD="/usr/bin/cut"
-DATE_CMD="/usr/bin/date"
-ECHO_CMD="/usr/bin/echo"
-STAT_CMD="/usr/bin/stat"
-MV_CMD="/usr/bin/mv"
-TOUCH_CMD="/usr/bin/touch"
-NC_CMD="/usr/bin/nc"
-AWK_CMD="/usr/bin/awk"
-NUMFMT_CMD="/usr/bin/numfmt"
-GREP_CMD="/usr/bin/grep"
+# --- Paths to Commands (Found automatically for portability - can also be defined as static with 'which <command>') ---
+RSYNC_CMD=$(command -v rsync)
+CURL_CMD=$(command -v curl)
+FLOCK_CMD=$(command -v flock)
+HOSTNAME_CMD=$(command -v hostname)
+CUT_CMD=$(command -v cut)
+DATE_CMD=$(command -v date)
+ECHO_CMD=$(command -v echo)
+STAT_CMD=$(command -v stat)
+MV_CMD=$(command -v mv)
+TOUCH_CMD=$(command -v touch)
+NC_CMD=$(command -v nc)
+AWK_CMD=$(command -v awk)
+NUMFMT_CMD=$(command -v numfmt)
+GREP_CMD=$(command -v grep)
 
 # --- Source and Destination ---
 LOCAL_DIR="/home/user1/" # change this
