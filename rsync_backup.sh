@@ -59,6 +59,11 @@ AWK_CMD=$(command -v awk)
 NUMFMT_CMD=$(command -v numfmt)
 GREP_CMD=$(command -v grep)
 
+# --- Logging, Rotation & Locking ---
+LOG_FILE="/var/log/backup_rsync.log"
+LOCK_FILE="/tmp/backup_rsync.lock"
+MAX_LOG_SIZE=10485760 # 10 MB in bytes
+
 # --- Source and Destination ---
 LOCAL_DIR="/home/user1/" # change this
 BOX_DIR="/home/vps/" # change this
@@ -67,11 +72,6 @@ BOX_DIR="/home/vps/" # change this
 EXCLUDE_FROM="/home/user1/scripts/rsync-backup/rsync_exclude.txt" # change this # make sure rsync_exclude.txt exist and path is correct
 HETZNER_BOX="u400000-sub4@u400000.your-storagebox.de" # change this
 SSH_PORT="23"
-
-# --- Logging, Rotation & Locking ---
-LOG_FILE="/var/log/backup_rsync.log"
-LOCK_FILE="/tmp/backup_rsync.lock"
-MAX_LOG_SIZE=10485760 # 10 MB in bytes
 
 # --- ntfy Notifications ---
 NTFY_TOKEN="tk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" # change this
