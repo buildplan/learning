@@ -30,7 +30,7 @@ set -Euo pipefail
 # Set a secure umask for files created by this script (e.g., logs, locks).
 umask 077
 
-# --- Paths to Commands (Found automatically for portability - can also be defined as static with 'which <command>') ---
+# --- Paths to Commands (Found automatically - can also be defined as static with 'which <command>') ---
 RSYNC_CMD=$(command -v rsync)
 CURL_CMD=$(command -v curl)
 FLOCK_CMD=$(command -v flock)
