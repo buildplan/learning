@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # --- run as cron job as root ---
-# 5 5 * * * /home/hali/scripts/rsync-backup/run_backup.sh
+# 5 5 * * * /home/user1/scripts/rsync-backup/run_backup.sh
 
 set -Euo pipefail
 umask 077
