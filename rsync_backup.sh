@@ -27,7 +27,7 @@ LOCAL_DIR="/home/user1/"
 BOX_DIR="/home/vps/"
 
 # --- rsync & SSH ---
-EXCLUDE_FROM="/home/user1/scripts/rsync-backup/rsync_exclude.txt" # correect this # make sure rsync_exclude.txt exist and path is correct
+EXCLUDE_FROM="/home/user1/scripts/rsync-backup/rsync_exclude.txt" # change this # make sure rsync_exclude.txt exist and path is correct
 HETZNER_BOX="u400000-sub4@u400000.your-storagebox.de" # change this
 SSH_PORT="23"
 
