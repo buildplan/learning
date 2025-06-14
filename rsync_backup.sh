@@ -36,6 +36,20 @@ MAX_LOG_SIZE=10485760 # 10 MB in bytes
 NTFY_TOKEN="tk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 NTFY_URL="https://ntfy.mydomain.com/backups"
 
+# --- ntfy function ---
+send_ntfy() {
+    local title="$1"
+    local tags="$2"
+    local priority="${3:-default}"
+    local message="$4"
+    "$CURL_CMD" -s -u :"$NTFY_TOKEN" \
+        -H "Title: ${title}" \
+        -H "Tags: ${tags}" \
+        -H "Priority: ${priority}" \
+        -d "$message" \
+        "$NTFY_URL" > /dev/null 2>> "$LOG_FILE"
+}
+
 # =================================================================
 
 # --- PRE-FLIGHT CHECKS ---
@@ -74,16 +88,27 @@ fi
 "$ECHO_CMD" "============================================================" >> "$LOG_FILE"
 "$ECHO_CMD" "[$("$DATE_CMD" '+%Y-%m-%d %H:%M:%S')] Starting rsync backup for ${HOSTNAME}" >> "$LOG_FILE"
 
+# --- NETWORK CONNECTIVITY CHECK ---
+DEST_HOST=$("$ECHO_CMD" "$HETZNER_BOX" | "$CUT_CMD" -d'@' -f2)
+
+if ! nc -z -w 5 "$DEST_HOST" "$SSH_PORT"; then
+    LOG_MSG="FATAL: Cannot reach destination host $DEST_HOST on port $SSH_PORT. Aborting backup."
+    "$ECHO_CMD" "[$("$DATE_CMD" '+%Y-%m-%d %H:%M:%S')] $LOG_MSG" >> "$LOG_FILE"
+    send_ntfy "❌ Backup FAILED: ${HOSTNAME}" "x" "high" "$LOG_MSG"
+    exit 4 # Exit with a specific code for network failure
+fi
+
+# --- proceed with the rsync command ---
 if "$RSYNC_CMD" -avz --delete --partial --timeout=60 --exclude-from="$EXCLUDE_FROM" -e "ssh -p $SSH_PORT" "$LOCAL_DIR" "$HETZNER_BOX":"$BOX_DIR" >> "$LOG_FILE" 2>&1
 then
     # --- SUCCESS ---
     "$ECHO_CMD" "[$("$DATE_CMD" '+%Y-%m-%d %H:%M:%S')] SUCCESS: rsync completed successfully." >> "$LOG_FILE"
-    "$CURL_CMD" -u :"$NTFY_TOKEN" -H "Title: ✅ Backup SUCCESS: ${HOSTNAME}" -H "Tags: white_check_mark" -d "rsync completed successfully from ${HOSTNAME}" "$NTFY_URL" > /dev/null 2>&1
+    send_ntfy "✅ Backup SUCCESS: ${HOSTNAME}" "white_check_mark" "default" "rsync backup completed successfully from ${HOSTNAME}"
 else
     # --- FAILURE ---
     EXIT_CODE=$?
     "$ECHO_CMD" "[$("$DATE_CMD" '+%Y-%m-%d %H:%M:%S')] FAILED: rsync exited with status code: $EXIT_CODE." >> "$LOG_FILE"
-    "$CURL_CMD" -u :"$NTFY_TOKEN" -H "Title: ❌ Backup FAILED: ${HOSTNAME}" -H "Tags: x" -H "Priority: high" -d "rsync failed on ${HOSTNAME} with exit code ${EXIT_CODE}. Check log for details: ${LOG_FILE}" "$NTFY_URL" > /dev/null 2>&1
+    send_ntfy "❌ Backup FAILED: ${HOSTNAME}" "x" "high" "rsync failed on ${HOSTNAME} with exit code ${EXIT_CODE}. Check log for details: ${LOG_FILE}"
 fi
 
 "$ECHO_CMD" "======================= Run Finished =======================" >> "$LOG_FILE"
