@@ -157,6 +157,13 @@ do
     fi
 done
 
+# --- check SSH connectivity ---
+if ! ssh -p "$SSH_PORT" -o BatchMode=yes -o ConnectTimeout=5 "$HETZNER_BOX" 'exit' 2>/dev/null; then
+    send_ntfy "❌ SSH FAILED" "x" "high" "Unable to SSH into $HETZNER_BOX"
+    trap - ERR
+    exit 6
+fi
+
 # --- PRE-FLIGHT CHECKS ---
 if ! [ -f "$EXCLUDE_FROM" ]; then
     send_ntfy "❌ Backup FAILED: ${HOSTNAME}" "x" "high" "FATAL: Exclude file not found at $EXCLUDE_FROM"
