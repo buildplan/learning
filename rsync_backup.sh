@@ -56,33 +56,41 @@ send_ntfy() {
 
 # --- Function to format backup stats ---
 format_backup_stats() {
-    # Find the relevant stats line at the end of the log file.
     local stats_line
     stats_line=$("$GREP_CMD" 'Total transferred file size' "$LOG_FILE" | tail -n 1)
 
-    # Check if we found the line
     if [ -n "$stats_line" ]; then
         local bytes
-        bytes=$(echo "$stats_line" | "$AWK_CMD" '{print $5}')
+        bytes=$(echo "$stats_line" | "$AWK_CMD" '{gsub(/,/, ""); print $5}')
 
-        if [[ "$bytes" -gt 0 ]]; then
-             local human_readable
+        if [[ "$bytes" =~ ^[0-9]+$ ]] && [[ "$bytes" -gt 0 ]]; then
+            local human_readable
             human_readable=$("$NUMFMT_CMD" --to=iec-i --suffix=B --format="%.2f" "$bytes")
             printf "Data Transferred: %s" "${human_readable}"
         else
             printf "Data Transferred: 0 B (No changes)"
         fi
     else
-        # Fallback message if the stats line isn't found for some reason
         printf "See log for statistics."
     fi
 }
 
+# --- Global ERR Trap ---
+trap 'send_ntfy "❌ Backup Crashed: ${HOSTNAME}" "x" "high" "Backup script terminated unexpectedly. Check log: ${LOG_FILE}"' ERR
+
 # =================================================================
 
 # --- PRE-FLIGHT CHECKS ---
-[ -f "$EXCLUDE_FROM" ] || { "$ECHO_CMD" "FATAL: Exclude file not found at $EXCLUDE_FROM"; exit 3; }
-[[ "$LOCAL_DIR" == */ ]] || { "$ECHO_CMD" "FATAL: LOCAL_DIR must end with a trailing slash ('/')"; exit 2; }
+if ! [ -f "$EXCLUDE_FROM" ]; then
+    send_ntfy "❌ Backup FAILED: ${HOSTNAME}" "x" "high" "FATAL: Exclude file not found at $EXCLUDE_FROM"
+    trap - ERR
+    exit 3
+fi
+if [[ "$LOCAL_DIR" != */ ]]; then
+    send_ntfy "❌ Backup FAILED: ${HOSTNAME}" "x" "high" "FATAL: LOCAL_DIR must end with a trailing slash ('/')"
+    trap - ERR
+    exit 2
+fi
 
 # --- SCRIPT EXECUTION ---
 HOSTNAME=$("$HOSTNAME_CMD" | "$CUT_CMD" -d'.' -f1)
@@ -90,6 +98,8 @@ HOSTNAME=$("$HOSTNAME_CMD" | "$CUT_CMD" -d'.' -f1)
 # Check for a --dry-run argument
 if [[ "${1:-}" == "--dry-run" ]]; then
     # --- DRY-RUN MODE ---
+    trap - ERR # Disable the crash trap for dry runs.
+
     "$ECHO_CMD" "============================================================" | tee -a "$LOG_FILE"
     "$ECHO_CMD" "[$("$DATE_CMD" '+%Y-%m-%d %H:%M:%S')] --- DRY RUN MODE ACTIVATED ---" | tee -a "$LOG_FILE"
     "$ECHO_CMD" "============================================================" | tee -a "$LOG_FILE"
@@ -105,7 +115,7 @@ fi
 
 # --- LOCKING ---
 exec 200>"$LOCK_FILE"
-"$FLOCK_CMD" -n 200 || exit 1
+"$FLOCK_CMD" -n 200 || { echo "Another instance is running, exiting."; exit 5; }
 
 # --- BUILT-IN LOG ROTATION ---
 if [ -f "$LOG_FILE" ] && [ "$("$STAT_CMD" -c%s "$LOG_FILE")" -gt "$MAX_LOG_SIZE" ]; then
@@ -123,23 +133,26 @@ if ! "$NC_CMD" -z -w 5 "$DEST_HOST" "$SSH_PORT"; then
     LOG_MSG="FATAL: Cannot reach destination host $DEST_HOST on port $SSH_PORT. Aborting backup."
     "$ECHO_CMD" "[$("$DATE_CMD" '+%Y-%m-%d %H:%M:%S')] $LOG_MSG" >> "$LOG_FILE"
     send_ntfy "❌ Backup FAILED: ${HOSTNAME}" "x" "high" "$LOG_MSG"
-    exit 4 # Exit with a specific code for network failure
+    trap - ERR
+    exit 4
 fi
 
 # --- proceed with the rsync command ---
-if "$RSYNC_CMD" -avz --stats --delete --partial --timeout=60 --exclude-from="$EXCLUDE_FROM" -e "ssh -p $SSH_PORT" "$LOCAL_DIR" "$HETZNER_BOX":"$BOX_DIR" >> "$LOG_FILE" 2>&1
+if LC_ALL=C "$RSYNC_CMD" -avz --stats --delete --partial --timeout=60 --exclude-from="$EXCLUDE_FROM" -e "ssh -p $SSH_PORT" "$LOCAL_DIR" "$HETZNER_BOX":"$BOX_DIR" >> "$LOG_FILE" 2>&1
 then
     # --- SUCCESS ---
+    trap - ERR
+
     "$ECHO_CMD" "[$("$DATE_CMD" '+%Y-%m-%d %H:%M:%S')] SUCCESS: rsync completed successfully." >> "$LOG_FILE"
 
     BACKUP_STATS=$(format_backup_stats)
-    
-    # Use printf to build the final multi-line message for the notification
     printf -v SUCCESS_MSG "rsync backup completed successfully.\n\n%s" "${BACKUP_STATS}"
- 
+
     send_ntfy "✅ Backup SUCCESS: ${HOSTNAME}" "white_check_mark" "default" "${SUCCESS_MSG}"
 else
     # --- FAILURE ---
+    trap - ERR
+
     EXIT_CODE=$?
     "$ECHO_CMD" "[$("$DATE_CMD" '+%Y-%m-%d %H:%M:%S')] FAILED: rsync exited with status code: $EXIT_CODE." >> "$LOG_FILE"
     send_ntfy "❌ Backup FAILED: ${HOSTNAME}" "x" "high" "rsync failed on ${HOSTNAME} with exit code ${EXIT_CODE}. Check log for details: ${LOG_FILE}"
