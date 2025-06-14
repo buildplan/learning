@@ -211,7 +211,7 @@ if [[ "${1:-}" == "--checksum" ]]; then
     "$ECHO_CMD" "[$("$DATE_CMD" '+%Y-%m-%d %H:%M:%S')] --- INTEGRITY CHECK MODE ACTIVATED ---" >> "$LOG_FILE"
     "$ECHO_CMD" "============================================================" >> "$LOG_FILE"
 
-    # Call our shared function to get the list of discrepancie
+    # Call shared function to get the list of discrepancie
     FILE_DISCREPANCIES=$(run_integrity_check)
 
     if [ -z "$FILE_DISCREPANCIES" ]; then
