@@ -1,12 +1,15 @@
 #!/bin/bash
 
+# --- Download script ---
+# wget https://raw.githubusercontent.com/buildplan/learning/refs/heads/main/rsync_backup.sh'
+#
 # --- SSH KEY ---
-# genrate SSH key for root if you haven't already 
-# sudo su 
+# genrate SSH key for root if you haven't already
+# sudo su
 # ssh-keygen -t ed25519
-# copy ssh pubilc key to Hetzner storage box 
+# copy ssh pubilc key to Hetzner storage box
 # ssh-copy-id -p 23 -s u400000-sub4@u400000.your-storagebox.de
-# adjust the usser name for sub account and server address 
+# adjust the usser name for sub account and server address
 #
 # --- run cron job as root ---
 # sudo apt-get install cron
