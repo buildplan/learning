@@ -17,6 +17,10 @@ ECHO_CMD="/usr/bin/echo"
 STAT_CMD="/usr/bin/stat"
 MV_CMD="/usr/bin/mv"
 TOUCH_CMD="/usr/bin/touch"
+NC_CMD="/usr/bin/nc"
+AWK_CMD="/usr/bin/awk"
+NUMFMT_CMD="/usr/bin/numfmt"
+GREP_CMD="/usr/bin/grep"
 
 # --- Source and Destination ---
 LOCAL_DIR="/home/user1/"
@@ -54,16 +58,16 @@ send_ntfy() {
 format_backup_stats() {
     # Find the relevant stats line at the end of the log file.
     local stats_line
-    stats_line=$(grep 'Total transferred file size' "$LOG_FILE" | tail -n 1)
+    stats_line=$("$GREP_CMD" 'Total transferred file size' "$LOG_FILE" | tail -n 1)
 
     # Check if we found the line
     if [ -n "$stats_line" ]; then
         local bytes
-        bytes=$(echo "$stats_line" | awk '{print $5}')
+        bytes=$(echo "$stats_line" | "$AWK_CMD" '{print $5}')
 
         if [[ "$bytes" -gt 0 ]]; then
              local human_readable
-            human_readable=$(numfmt --to=iec-i --suffix=B --format="%.2f" "$bytes")
+            human_readable=$("$NUMFMT_CMD" --to=iec-i --suffix=B --format="%.2f" "$bytes")
             printf "Data Transferred: %s" "${human_readable}"
         else
             printf "Data Transferred: 0 B (No changes)"
@@ -115,7 +119,7 @@ fi
 # --- NETWORK CONNECTIVITY CHECK ---
 DEST_HOST=$("$ECHO_CMD" "$HETZNER_BOX" | "$CUT_CMD" -d'@' -f2)
 
-if ! nc -z -w 5 "$DEST_HOST" "$SSH_PORT"; then
+if ! "$NC_CMD" -z -w 5 "$DEST_HOST" "$SSH_PORT"; then
     LOG_MSG="FATAL: Cannot reach destination host $DEST_HOST on port $SSH_PORT. Aborting backup."
     "$ECHO_CMD" "[$("$DATE_CMD" '+%Y-%m-%d %H:%M:%S')] $LOG_MSG" >> "$LOG_FILE"
     send_ntfy "❌ Backup FAILED: ${HOSTNAME}" "x" "high" "$LOG_MSG"
