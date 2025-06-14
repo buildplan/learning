@@ -225,7 +225,7 @@ if [[ "${1:-}" == "--checksum" ]]; then
         printf -v FAILURE_MSG "Backup integrity check FAILED. Discrepancies found between source and backup.\n\nFirst few differing files:\n%s\n\nCheck log for full details." "${ISSUE_LIST}"
         send_ntfy "❌ Backup Integrity FAILED: ${HOSTNAME}" "x" "high" "${FAILURE_MSG}"
     fi
-    
+
     exit 0
 fi
 
@@ -234,13 +234,13 @@ if [[ "${1:-}" == "--summary" ]]; then
     trap - ERR
 
     FILE_DISCREPANCIES=$(run_integrity_check)
-    
+
     # Count the number of lines in the discrepancy list.
     MISMATCH_COUNT=$(echo "${FILE_DISCREPANCIES}" | wc -l)
-    
+
     # Print the summary report.
     printf "🚨 Total files with checksum mismatches: %d\n" "$MISMATCH_COUNT"
-    
+
     exit 0
 fi
 
