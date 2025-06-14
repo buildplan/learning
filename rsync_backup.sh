@@ -177,6 +177,21 @@ if [[ "${1:-}" == "--dry-run" ]]; then
     exit 0 # Exit cleanly without locking, notifications, or further logging.
 fi
 
+# Check for a --checksum argument (Integrity Check Mode)
+if [[ "${1:-}" == "--checksum" ]]; then
+    trap - ERR # Disable crash trap for integrity checks.
+
+    "$ECHO_CMD" "============================================================" | tee -a "$LOG_FILE"
+    "$ECHO_CMD" "[$("$DATE_CMD" '+%Y-%m-%d %H:%M:%S')] --- INTEGRITY CHECK MODE ACTIVATED ---" | tee -a "$LOG_FILE"
+    "$ECHO_CMD" "============================================================" | tee -a "$LOG_FILE"
+
+    # Execute rsync with the --checksum flag to verify integrity
+    "$RSYNC_CMD" -avz --checksum --dry-run --delete --exclude-from="$EXCLUDE_FROM" -e "ssh -p $SSH_PORT" "$LOCAL_DIR" "$HETZNER_BOX":"$BOX_DIR" | tee -a "$LOG_FILE"
+
+    "$ECHO_CMD" "[$("$DATE_CMD" '+%Y-%m-%d %H:%M:%S')] --- INTEGRITY CHECK COMPLETED ---" | tee -a "$LOG_FILE"
+    exit 0 # Exit cleanly without locking, notifications, or further logging.
+fi
+
 # --- REAL RUN MODE (Proceeds only if not a dry run) ---
 
 # --- LOCKING ---
