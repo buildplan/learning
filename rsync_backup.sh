@@ -1,8 +1,18 @@
 #!/bin/bash
 
-# --- run as cron job as root ---
-# 5 5 * * * /home/hali/scripts/rsync-backup/run_backup.sh
-
+# --- SSH KEY ---
+# genrate SSH key for root if you haven't already 
+# sudo su 
+# ssh-keygen -t ed25519
+# copy ssh pubilc key to Hetzner storage box 
+# ssh-copy-id -p 23 -s u400000-sub4@u400000.your-storagebox.de
+# adjust the usser name for sub account and server address 
+#
+# --- run cron job as root ---
+# sudo apt-get install cron
+# sudo crontab -e
+# 5 5 * * * /home/user1/scripts/rsync-backup/run_backup.sh
+#
 # --- Prerequisites ---
 # This script requires the following commands to be installed and accessible.
 # On Debian/Ubuntu:
