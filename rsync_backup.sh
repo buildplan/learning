@@ -23,8 +23,8 @@ NUMFMT_CMD="/usr/bin/numfmt"
 GREP_CMD="/usr/bin/grep"
 
 # --- Source and Destination ---
-LOCAL_DIR="/home/user1/"
-BOX_DIR="/home/vps/"
+LOCAL_DIR="/home/user1/" # change this
+BOX_DIR="/home/vps/" # change this
 
 # --- rsync & SSH ---
 EXCLUDE_FROM="/home/user1/scripts/rsync-backup/rsync_exclude.txt" # change this # make sure rsync_exclude.txt exist and path is correct
