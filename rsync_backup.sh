@@ -110,7 +110,7 @@ then
         BACKUP_STATS="See log for details."
     fi
 
-    SUCCESS_MSG=$"rsync backup completed successfully.\n\n${BACKUP_STATS}"
+    printf -v SUCCESS_MSG "rsync backup completed successfully.\n\n%s" "${BACKUP_STATS}"
     
     send_ntfy "✅ Backup SUCCESS: ${HOSTNAME}" "white_check_mark" "default" "${SUCCESS_MSG}"
 else
