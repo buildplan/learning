@@ -1,9 +1,33 @@
 #!/bin/bash
 
 # --- run as cron job as root ---
-# 5 5 * * * /home/user1/scripts/rsync-backup/run_backup.sh
+# 5 5 * * * /home/hali/scripts/rsync-backup/run_backup.sh
 
+# --- Prerequisites ---
+# This script requires the following commands to be installed and accessible.
+# On Debian/Ubuntu:
+# sudo apt-get install -y rsync curl netcat-openbsd gawk coreutils
+#
+# On CentOS/RHEL/Fedora:
+# sudo dnf install -y rsync curl flock nc gawk coreutils
+#
+# - rsync: For the core file transfer.
+# - curl: For sending ntfy notifications.
+# - flock: For preventing concurrent script runs.
+# - nc (netcat): For the network connectivity check.
+# - gawk (awk): For processing rsync stats.
+# - coreutils (numfmt, stat, etc.): Standard on most systems.
+
+# =================================================================
+#               SCRIPT CONFIGURATION & OPTIONS
+# =================================================================
+# -E: ERR traps are inherited by shell functions.
+# -u: Exit on unset variables.
+# -o pipefail: Exit status of a pipeline is the rightmost failing command.
+# -e: Exit on command errors.
 set -Euo pipefail
+
+# Set a secure umask for files created by this script (e.g., logs, locks).
 umask 077
 
 # --- Paths to Commands (Verify with 'which <command>') ---
@@ -78,7 +102,33 @@ format_backup_stats() {
 # --- Global ERR Trap ---
 trap 'send_ntfy "❌ Backup Crashed: ${HOSTNAME}" "x" "high" "Backup script terminated unexpectedly. Check log: ${LOG_FILE}"' ERR
 
-# =================================================================
+# --- Automated Prerequisite Check ---
+# Verify that all required commands are available before proceeding.
+for cmd_path in \
+    "$RSYNC_CMD" \
+    "$CURL_CMD" \
+    "$FLOCK_CMD" \
+    "$NC_CMD" \
+    "$AWK_CMD" \
+    "$NUMFMT_CMD" \
+    "$GREP_CMD" \
+    "$HOSTNAME_CMD" \
+    "$CUT_CMD" \
+    "$DATE_CMD" \
+    "$STAT_CMD" \
+    "$MV_CMD" \
+    "$TOUCH_CMD"
+do
+    # Use 'command -v' to check if the command exists and is executable.
+    if ! command -v "$cmd_path" &>/dev/null; then
+        # Extract just the command name for the error message
+        cmd_name=$(basename "$cmd_path")
+        echo "FATAL: Required command '$cmd_name' not found at '$cmd_path'. Please install it." >&2
+        # We can't send a notification because curl might be the missing command.
+        trap - ERR # Disable trap before our intentional exit.
+        exit 10
+    fi
+done
 
 # --- PRE-FLIGHT CHECKS ---
 if ! [ -f "$EXCLUDE_FROM" ]; then
@@ -92,7 +142,10 @@ if [[ "$LOCAL_DIR" != */ ]]; then
     exit 2
 fi
 
-# --- SCRIPT EXECUTION ---
+# =================================================================
+#                         SCRIPT EXECUTION
+# =================================================================
+
 HOSTNAME=$("$HOSTNAME_CMD" | "$CUT_CMD" -d'.' -f1)
 
 # Check for a --dry-run argument
