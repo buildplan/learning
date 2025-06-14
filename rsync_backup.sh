@@ -30,7 +30,13 @@
 # - nc (netcat): For the network connectivity check.
 # - gawk (awk): For processing rsync stats.
 # - coreutils (numfmt, stat, etc.): Standard on most systems.
-
+# 
+# --- check backup integrity and integrity summary --
+# sudo ./rsync_backup.sh --summary
+# sudo ./rsync_backup.sh --checksum
+# --- dry-run ---
+# sudo ./rsync_backup.sh --dry-run
+#
 # =================================================================
 #               SCRIPT CONFIGURATION & OPTIONS
 # =================================================================
