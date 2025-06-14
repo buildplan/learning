@@ -50,6 +50,30 @@ send_ntfy() {
         "$NTFY_URL" > /dev/null 2>> "$LOG_FILE"
 }
 
+# --- Function to format backup stats ---
+format_backup_stats() {
+    # Find the relevant stats line at the end of the log file.
+    local stats_line
+    stats_line=$(grep 'Total transferred file size' "$LOG_FILE" | tail -n 1)
+
+    # Check if we found the line
+    if [ -n "$stats_line" ]; then
+        local bytes
+        bytes=$(echo "$stats_line" | awk '{print $5}')
+
+        if [[ "$bytes" -gt 0 ]]; then
+             local human_readable
+            human_readable=$(numfmt --to=iec-i --suffix=B --format="%.2f" "$bytes")
+            printf "Data Transferred: %s" "${human_readable}"
+        else
+            printf "Data Transferred: 0 B (No changes)"
+        fi
+    else
+        # Fallback message if the stats line isn't found for some reason
+        printf "See log for statistics."
+    fi
+}
+
 # =================================================================
 
 # --- PRE-FLIGHT CHECKS ---
@@ -103,15 +127,12 @@ if "$RSYNC_CMD" -avz --stats --delete --partial --timeout=60 --exclude-from="$EX
 then
     # --- SUCCESS ---
     "$ECHO_CMD" "[$("$DATE_CMD" '+%Y-%m-%d %H:%M:%S')] SUCCESS: rsync completed successfully." >> "$LOG_FILE"
-    
-    BACKUP_STATS=$(grep -E 'Number of files transferred|Total file size' "$LOG_FILE" | tail -n 2 || true)
-    
-    if [ -z "$BACKUP_STATS" ]; then
-        BACKUP_STATS="See log for details."
-    fi
 
-    printf -v SUCCESS_MSG "rsync backup completed successfully.\n\n%s" "${BACKUP_STATS}"
+    BACKUP_STATS=$(format_backup_stats)
     
+    # Use printf to build the final multi-line message for the notification
+    printf -v SUCCESS_MSG "rsync backup completed successfully.\n\n%s" "${BACKUP_STATS}"
+ 
     send_ntfy "✅ Backup SUCCESS: ${HOSTNAME}" "white_check_mark" "default" "${SUCCESS_MSG}"
 else
     # --- FAILURE ---
