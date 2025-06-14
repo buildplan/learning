@@ -91,6 +91,14 @@ send_ntfy() {
         "$NTFY_URL" > /dev/null 2>> "$LOG_FILE"
 }
 
+# --- Function to run the rsync integrity check ---
+run_integrity_check() {
+    local rsync_output
+    rsync_output=$(LC_ALL=C "$RSYNC_CMD" -avz --checksum --dry-run --stats --delete --exclude-from="$EXCLUDE_FROM" -e "ssh -p $SSH_PORT" "$LOCAL_DIR" "$HETZNER_BOX":"$BOX_DIR" 2>&1 | tee -a "$LOG_FILE")
+
+    echo "${rsync_output}" | "$GREP_CMD" -v -E "sending incremental file list|^$|Number of files:|Total file size:|Total transferred file size:|total size is" || true
+}
+
 # --- Function to format backup stats ---
 format_backup_stats() {
     local stats_line
@@ -177,19 +185,50 @@ if [[ "${1:-}" == "--dry-run" ]]; then
     exit 0 # Exit cleanly without locking, notifications, or further logging.
 fi
 
-# Check for a --checksum argument (Integrity Check Mode)
+# Check for a --checksum argument (Integrity Check Mode with Notifications)
 if [[ "${1:-}" == "--checksum" ]]; then
-    trap - ERR # Disable crash trap for integrity checks.
+    trap - ERR
 
-    "$ECHO_CMD" "============================================================" | tee -a "$LOG_FILE"
-    "$ECHO_CMD" "[$("$DATE_CMD" '+%Y-%m-%d %H:%M:%S')] --- INTEGRITY CHECK MODE ACTIVATED ---" | tee -a "$LOG_FILE"
-    "$ECHO_CMD" "============================================================" | tee -a "$LOG_FILE"
+    if [ -f "$LOG_FILE" ] && [ "$("$STAT_CMD" -c%s "$LOG_FILE")" -gt "$MAX_LOG_SIZE" ]; then
+        "$MV_CMD" "$LOG_FILE" "${LOG_FILE}.$("$DATE_CMD" +%Y%m%d_%H%M%S)"
+        "$TOUCH_CMD" "$LOG_FILE"
+    fi
 
-    # Execute rsync with the --checksum flag to verify integrity
-    "$RSYNC_CMD" -avz --checksum --dry-run --delete --exclude-from="$EXCLUDE_FROM" -e "ssh -p $SSH_PORT" "$LOCAL_DIR" "$HETZNER_BOX":"$BOX_DIR" | tee -a "$LOG_FILE"
+    "$ECHO_CMD" "============================================================" >> "$LOG_FILE"
+    "$ECHO_CMD" "[$("$DATE_CMD" '+%Y-%m-%d %H:%M:%S')] --- INTEGRITY CHECK MODE ACTIVATED ---" >> "$LOG_FILE"
+    "$ECHO_CMD" "============================================================" >> "$LOG_FILE"
 
-    "$ECHO_CMD" "[$("$DATE_CMD" '+%Y-%m-%d %H:%M:%S')] --- INTEGRITY CHECK COMPLETED ---" | tee -a "$LOG_FILE"
-    exit 0 # Exit cleanly without locking, notifications, or further logging.
+    # Call our shared function to get the list of discrepancie
+    FILE_DISCREPANCIES=$(run_integrity_check)
+
+    if [ -z "$FILE_DISCREPANCIES" ]; then
+        # --- INTEGRITY OK ---
+        "$ECHO_CMD" "[$("$DATE_CMD" '+%Y-%m-%d %H:%M:%S')] --- INTEGRITY CHECK PASSED ---" >> "$LOG_FILE"
+        send_ntfy "✅ Backup Integrity OK: ${HOSTNAME}" "white_check_mark" "default" "Checksum validation completed successfully. No discrepancies found."
+    else
+        # --- INTEGRITY FAILED ---
+        "$ECHO_CMD" "[$("$DATE_CMD" '+%Y-%m-%d %H:%M:%S')] --- INTEGRITY CHECK FAILED ---" >> "$LOG_FILE"
+        ISSUE_LIST=$(echo "${FILE_DISCREPANCIES}" | head -n 10)
+        printf -v FAILURE_MSG "Backup integrity check FAILED. Discrepancies found between source and backup.\n\nFirst few differing files:\n%s\n\nCheck log for full details." "${ISSUE_LIST}"
+        send_ntfy "❌ Backup Integrity FAILED: ${HOSTNAME}" "x" "high" "${FAILURE_MSG}"
+    fi
+    
+    exit 0
+fi
+
+# Check for a --summary argument (Integrity Check Summary Mode)
+if [[ "${1:-}" == "--summary" ]]; then
+    trap - ERR
+
+    FILE_DISCREPANCIES=$(run_integrity_check)
+    
+    # Count the number of lines in the discrepancy list.
+    MISMATCH_COUNT=$(echo "${FILE_DISCREPANCIES}" | wc -l)
+    
+    # Print the summary report.
+    printf "🚨 Total files with checksum mismatches: %d\n" "$MISMATCH_COUNT"
+    
+    exit 0
 fi
 
 # --- REAL RUN MODE (Proceeds only if not a dry run) ---
