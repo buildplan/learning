@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # --- Download script ---
-# wget https://raw.githubusercontent.com/buildplan/learning/refs/heads/main/rsync_backup.sh'
+# wget https://raw.githubusercontent.com/buildplan/learning/refs/heads/main/rsync_backup.sh
 #
 # --- SSH KEY ---
 # genrate SSH key for root if you haven't already
