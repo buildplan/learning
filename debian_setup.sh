@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Debian 12 Server Hardening Interactive Script
-# Version: 2.2 (Enhanced for Production)
+# Version: 2.3 (Production-Ready)
 # Compatible with: Debian 12 (Bookworm)
 #
 # Description:
@@ -328,7 +328,7 @@ install_packages() {
 
     print_info "Installing essential packages..."
     if ! apt-get install -y -qq \
-        ufw fail2ban unattended-upgrades \
+        ufw fail2ban unattended-upgrades chrony \
         rsync curl wget nano vim \
         htop iotop nethogs ncdu tree \
         rsyslog cron jq gawk coreutils \
@@ -426,9 +426,14 @@ EOF
     print_info "Testing SSH configuration..."
     if sshd -t; then
         print_success "SSH configuration test passed."
-        if ! systemctl is-active --quiet sshd; then
+        systemctl restart sshd
+        if systemctl is-active --quiet sshd; then
+            print_success "SSH service restarted and active."
+        else
+            print_error "SSH service failed to start. Reverting changes."
+            cp "$SSHD_BACKUP_FILE" /etc/ssh/sshd_config
             systemctl restart sshd
-            print_success "SSH service restarted."
+            exit 1
         fi
     else
         print_error "SSH configuration test failed! Reverting changes."
@@ -597,8 +602,16 @@ install_docker() {
 EOF
     fi
 
+    systemctl daemon-reload
     systemctl enable docker
     systemctl restart docker
+
+    print_info "Running Docker sanity check..."
+    if sudo -u "$USERNAME" docker run --rm hello-world 2>&1 | tee -a "$LOG_FILE" | grep -q "Hello from Docker"; then
+        print_success "Docker sanity check passed."
+    else
+        print_warning "Docker sanity check failed. Please verify Docker installation manually."
+    fi
 
     print_success "Docker installation completed."
     print_warning "NOTE: '$USERNAME' must log out and back in to use Docker without sudo."
@@ -680,9 +693,33 @@ configure_swap() {
         sysctl -p > /dev/null
     fi
 
-    print_success "Swap configured successfully."
+    print_info "Verifying swap configuration..."
+    swapon --show | tee -a "$LOG_FILE"
     free -h | tee -a "$LOG_FILE"
+    print_success "Swap configured successfully."
+
+    systemctl daemon-reload
+
     log "Swap configuration completed."
+}
+
+configure_time_sync() {
+    print_section "Time Synchronization Configuration"
+
+    print_info "Ensuring chrony is active..."
+    systemctl enable chrony
+    systemctl restart chrony
+    sleep 2 # Allow service to initialize
+
+    if systemctl is-active --quiet chrony; then
+        print_success "Chrony is active for time synchronization."
+        chronyc tracking | tee -a "$LOG_FILE"
+    else
+        print_error "Chrony service failed to start."
+        exit 1
+    fi
+
+    log "Time synchronization configuration completed."
 }
 
 final_cleanup() {
@@ -694,9 +731,7 @@ final_cleanup() {
         exit 1
     fi
 
-    print_info "Enabling NTP for time synchronization..."
-    timedatectl set-ntp true
-
+    systemctl daemon-reload
     print_success "Final cleanup complete."
     log "Final system configuration completed."
 }
@@ -714,6 +749,16 @@ generate_summary() {
     echo
     echo -e "${PURPLE}A detailed log of this session is available at: ${LOG_FILE}${NC}"
     echo -e "${PURPLE}Backups of critical files are stored in: ${BACKUP_DIR}${NC}"
+    echo
+    echo -e "${CYAN}Post-Reboot Verification Steps:${NC}"
+    echo -e "${CYAN}1. Check SSH access: ${NC}ssh -p $SSH_PORT -v $USERNAME@$SERVER_IP"
+    echo -e "${CYAN}2. Verify firewall rules: ${NC}sudo ufw status verbose"
+    echo -e "${CYAN}3. Confirm time sync: ${NC}chronyc tracking"
+    echo -e "${CYAN}4. Check Fail2Ban: ${NC}sudo fail2ban-client status sshd"
+    echo -e "${CYAN}5. Verify swap: ${NC}swapon --show && free -h"
+    if command -v docker >/dev/null 2>&1; then
+        echo -e "${CYAN}6. Test Docker: ${NC}docker run --rm hello-world"
+    fi
     echo
 
     print_warning "A reboot is required to apply all changes cleanly."
@@ -761,6 +806,7 @@ main() {
     configure_firewall
     configure_fail2ban
     configure_auto_updates
+    configure_time_sync
     install_docker
     install_tailscale
     configure_swap
