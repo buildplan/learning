@@ -68,9 +68,9 @@ log() {
 print_header() {
     [[ $VERBOSE == false ]] && return
     echo -e "${CYAN}╔══════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${CYAN}║                                                          ║${NC}"
-    echo -e "${CYAN}║            DEBIAN 12 SERVER HARDENING SCRIPT             ║${NC}"
-    echo -e "${CYAN}║                                                          ║${NC}"
+    echo -e "${CYAN}║                                                              ║${NC}"
+    echo -e "${CYAN}║            DEBIAN 12 SERVER HARDENING SCRIPT                 ║${NC}"
+    echo -e "${CYAN}║                                                              ║${NC}"
     echo -e "${CYAN}╚══════════════════════════════════════════════════════════════╝${NC}"
     echo
 }
