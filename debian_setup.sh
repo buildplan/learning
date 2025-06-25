@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Debian 12 Server Hardening Interactive Script
-# Version: 2.5 (Production-Ready)
+# Version: 2.6 (Production-Ready)
 # Compatible with: Debian 12 (Bookworm)
 #
 # Description:
@@ -616,6 +616,9 @@ install_docker() {
         return 0
     fi
 
+    print_info "Removing old container runtimes..."
+    apt-get remove -y -qq docker docker-engine docker.io containerd runc 2>/dev/null || true
+
     print_info "Adding Docker's official GPG key and repository..."
     install -m 0755 -d /etc/apt/keyrings
     curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
@@ -629,9 +632,15 @@ install_docker() {
         exit 1
     fi
 
+    print_info "Creating Docker group if it doesn't exist..."
+    getent group docker >/dev/null || groupadd docker
+
     print_info "Adding '$USERNAME' to docker group..."
     if ! groups "$USERNAME" | grep -q docker; then
         usermod -aG docker "$USERNAME"
+        print_success "User '$USERNAME' added to docker group."
+    else
+        print_info "User '$USERNAME' already in docker group."
     fi
 
     print_info "Configuring Docker daemon with log rotation..."
@@ -656,7 +665,7 @@ EOF
     if sudo -u "$USERNAME" docker run --rm hello-world 2>&1 | tee -a "$LOG_FILE" | grep -q "Hello from Docker"; then
         print_success "Docker sanity check passed."
     else
-        print_warning "Docker sanity check failed. Please verify Docker installation manually."
+        print_error "Docker hello-world test failed. Please verify Docker installation manually."
     fi
 
     print_success "Docker installation completed."
@@ -699,6 +708,8 @@ configure_swap() {
         return 0
     fi
 
+    print_section "Swap Configuration"
+
     if swapon --show | grep -q '/swapfile'; then
         print_info "Swap file already exists. Skipping."
         return 0
@@ -708,8 +719,6 @@ configure_swap() {
         print_info "Skipping swap configuration."
         return 0
     fi
-
-    print_section "Swap Configuration"
 
     # Check disk space
     REQUIRED_SPACE=$((2 * 1024 * 1024)) # 2GB in KB
@@ -784,28 +793,66 @@ final_cleanup() {
 generate_summary() {
     print_section "Setup Complete!"
 
+    print_section "Verifying Final Setup"
+    print_info "Checking firewall status..."
+    ufw status verbose | tee -a "$LOG_FILE"
+
+    print_info "Checking swap configuration..."
+    swapon --show | tee -a "$LOG_FILE"
+
+    print_info "Checking time synchronization..."
+    timedatectl | tee -a "$LOG_FILE"
+
+    if command -v docker >/dev/null 2>&1; then
+        print_info "Checking Docker status..."
+        docker ps | tee -a "$LOG_FILE"
+    fi
+
+    if command -v tailscale >/dev/null 2>&1; then
+        print_info "Checking Tailscale status..."
+        tailscale status | tee -a "$LOG_FILE"
+    fi
+
+    print_info "Checking critical services..."
+    for service in sshd ufw fail2ban chrony; do
+        if systemctl is-active --quiet "$service"; then
+            print_success "Service $service is active."
+        else
+            print_error "Service $service is not active."
+        fi
+    done
+    if command -v docker >/dev/null 2>&1; then
+        if systemctl is-active --quiet docker; then
+            print_success "Service docker is active."
+        else
+            print_error "Service docker is not active."
+        fi
+    fi
+    systemctl is-active sshd ufw fail2ban chrony docker 2>/dev/null | tee -a "$LOG_FILE"
+
     echo -e "${GREEN}Server hardening script has finished successfully.${NC}"
     echo
     echo -e "${YELLOW}Configuration Summary:${NC}"
-    echo -e "${YELLOW}├─ Admin User:  ${NC}$USERNAME"
-    echo -e "${YELLOW}├─ Hostname:    ${NC}$SERVER_NAME"
-    echo -e "${YELLOW}├─ SSH Port:    ${NC}$SSH_PORT"
-    echo -e "${YELLOW}└─ Server IP:   ${NC}$SERVER_IP"
+    echo -e "${YELLOW}├─ Admin User: ${NC}$USERNAME"
+    echo -e "${YELLOW}├─ Hostname:   ${NC}$SERVER_NAME"
+    echo -e "${YELLOW}├─ SSH Port:   ${NC}$SSH_PORT"
+    echo -e "${YELLOW}└─ Server IP:  ${NC}$SERVER_IP"
     echo
     echo -e "${PURPLE}A detailed log of this session is available at: ${LOG_FILE}${NC}"
     echo -e "${PURPLE}Backups of critical files are stored in: ${BACKUP_DIR}${NC}"
     echo
     echo -e "${CYAN}Post-Reboot Verification Steps:${NC}"
-    echo -e "${CYAN}1. Check SSH access: ${NC}ssh -p $SSH_PORT -v $USERNAME@$SERVER_IP"
-    echo -e "${CYAN}2. Verify firewall rules: ${NC}ufw status verbose"
-    echo -e "${CYAN}3. Confirm time sync: ${NC}chronyc tracking"
-    echo -e "${CYAN}4. Check Fail2Ban: ${NC}fail2ban-client status sshd"
-    echo -e "${CYAN}5. Verify swap: ${NC}swapon --show && free -h"
+    echo -e "${CYAN}  - Check SSH access: ${NC}ssh -p $SSH_PORT -v $USERNAME@$SERVER_IP"
+    echo -e "${CYAN}  - Verify firewall rules: ${NC}ufw status verbose"
+    echo -e "${CYAN}  - Check time sync: ${NC}chronyc tracking"
+    echo -e "${CYAN}  - Check Fail2Ban: ${NC}fail2ban-client status sshd"
+    echo -e "${CYAN}  - Verify swap: ${NC}swapon --show && free -h"
     if command -v docker >/dev/null 2>&1; then
-        echo -e "${CYAN}6. Test Docker: ${NC}docker run --rm hello-world"
+        echo -e "${CYAN}  - Test Docker: ${NC}docker run --rm hello-world"
     fi
-    echo
-
+    if command -v tailscale >/dev/null 2>&1; then
+        echo -e "${CYAN}  - Check Tailscale: ${NC}tailscale status"
+    fi
     print_warning "A reboot is required to apply all changes cleanly."
     if [[ $VERBOSE == true ]]; then
         if confirm "Reboot now?" "y"; then
@@ -813,7 +860,7 @@ generate_summary() {
             read -r
             reboot
         else
-            print_warning "Please reboot the server manually by running 'reboot'."
+            echo "Please reboot the server manually by running 'reboot'."
         fi
     else
         print_warning "Running in quiet mode. Please reboot the server manually by running 'reboot'."
@@ -824,7 +871,7 @@ generate_summary() {
 
 handle_error() {
     local exit_code=$?
-    local line_no=$1
+    local line_no="$1"
     print_error "An error occurred on line $line_no (exit code: $exit_code)."
     print_info "Check the log file for details: $LOG_FILE"
     print_info "Backups are available in: $BACKUP_DIR"
