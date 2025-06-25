@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Debian 12 and Ubuntu Server Hardening Interactive Script
-# Version: 2.7
+# Version: 2.7 (Production-Ready)
 # Compatible with: Debian 12 (Bookworm), Ubuntu 20.04 LTS, 22.04 LTS, 24.04 LTS
 #
 # Description:
@@ -15,14 +15,15 @@
 # - Internet connectivity is required for package installation.
 #
 # Usage:
-#   sudo ./harden_debian_ubuntu.sh [--quiet]
+#   Download: weget https://raw.githubusercontent.com/buildplan/learning/refs/heads/main/setup_harden_debian_ubuntu.sh
+#   sudo ./setup_harden_debian_ubuntu.sh [--quiet]
 #
 # Options:
 #   --quiet: Suppress non-critical output for automation.
 #
 # Notes:
-# - The script creates a log file in /var/log/debian_ubuntu_hardening_*.log.
-# - Critical configurations are backed up before modification.
+# - The script creates a log file in /var/log/setup_harden_debian_ubuntu_*.log.
+# - Critical configurations are backed up before modification. Backup file are at /root/setup_harden_backup_*
 # - A reboot is recommended at the end to apply all changes.
 # - Test the script in a VM before production use.
 #
@@ -44,9 +45,9 @@ NC='\033[0m' # No Color
 
 # Global variables
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-LOG_FILE="/var/log/debian_ubuntu_hardening_$(date +%Y%m%d_%H%M%S).log"
+LOG_FILE="/var/log/setup_harden_debian_ubuntu_$(date +%Y%m%d_%H%M%S).log"
 VERBOSE=true
-BACKUP_DIR="/root/hardening_backups_$(date +%Y%m%d_%H%M%S)"
+BACKUP_DIR="/root/setup_harden_backup_$(date +%Y%m%d_%H%M%S)"
 IS_CONTAINER=false
 SSHD_BACKUP_FILE=""  # Store SSH config backup filename
 
