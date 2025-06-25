@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Debian 12 Server Hardening Interactive Script
-# Version: 2.4 (Production-Ready)
+# Version: 2.5 (Production-Ready)
 # Compatible with: Debian 12 (Bookworm)
 #
 # Description:
@@ -11,11 +11,11 @@
 # production environments.
 #
 # Prerequisites:
-# - Run as root on a fresh Debian 12 server.
+# - Run as root on a fresh Debian 12 server (e.g., sudo ./harden_debian12.sh).
 # - Internet connectivity is required for package installation.
 #
 # Usage:
-#   sudo ./debian_setup.sh [--quiet]
+#   sudo ./harden_debian12.sh [--quiet]
 #
 # Options:
 #   --quiet: Suppress non-critical output for automation.
@@ -67,9 +67,9 @@ log() {
 print_header() {
     [[ $VERBOSE == false ]] && return
     echo -e "${CYAN}╔══════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${CYAN}║                                                              ║${NC}"
-    echo -e "${CYAN}║            DEBIAN 12 SERVER HARDENING SCRIPT                 ║${NC}"
-    echo -e "${CYAN}║                                                              ║${NC}"
+    echo -e "${CYAN}║                                                          ║${NC}"
+    echo -e "${CYAN}║            DEBIAN 12 SERVER HARDENING SCRIPT             ║${NC}"
+    echo -e "${CYAN}║                                                          ║${NC}"
     echo -e "${CYAN}╚══════════════════════════════════════════════════════════════╝${NC}"
     echo
 }
@@ -187,8 +187,7 @@ check_system() {
 
     # Enhanced root check
     if [[ $(whoami) != "root" ]]; then
-        print_error "This script must be run as root."
-        print_info "Example: sudo ./harden_debian12.sh"
+        print_error "This script must be run as root (e.g., sudo ./harden_debian12.sh)."
         exit 1
     fi
     print_success "Running with root privileges."
@@ -686,47 +685,48 @@ install_tailscale() {
         rm -f /tmp/tailscale_install.sh
         exit 1
     fi
-    print_success "Tailscale installation completed successfully."
     rm -f /tmp/tailscale_install.sh
-    print_warning "ACTION REQUIRED: Run 'sudo tailscale up' after this script finishes."
 
+    print_warning "ACTION REQUIRED: Run 'tailscale up' after this script finishes."
+
+    print_success "Tailscale installation package is complete."
     log "Tailscale installation completed."
 }
 
 configure_swap() {
     if [[ $IS_CONTAINER == true ]]; then
-        print_info "Skipping swap configuration..."
+        print_info "Swap configuration skipped in container environment."
         return 0
     fi
 
     if swapon --show | grep -q '/swapfile'; then
-        print_info "Swap file already exists."
+        print_info "Swap file already exists. Skipping."
         return 0
     fi
 
-    if ! confirm "Configure a 2GB swap file (Recommended for < 2GB RAM)?"; then
+    if ! confirm "Configure a 2GB swap file (Recommended for < 4GB RAM)?"; then
         print_info "Skipping swap configuration."
         return 0
     fi
 
-    print_section "Configuring Swap"
+    print_section "Swap Configuration"
 
     # Check disk space
-    REQUIRED_SPACE=$((2*1024*1024)) # 2GB in KB
-    AVAILABLE_SPACE=$(df -k / | tail -v -n 1 | awk '{print $4}')
+    REQUIRED_SPACE=$((2 * 1024 * 1024)) # 2GB in KB
+    AVAILABLE_SPACE=$(df -k / | tail -n 1 | awk '{print $4}')
     if [[ $AVAILABLE_SPACE -lt $REQUIRED_SPACE ]]; then
-        print_error "ERROR: Not enough disk space for 2GB swap file. Available: $((AVAILABLE_SPACE/1024))MB"
-        exit 1
+        print_error "Insufficient disk space for 2GB swap file. Available: $((AVAILABLE_SPACE / 1024))MB"
+        return 1
     fi
+
     print_info "Creating 2GB swap file..."
-    sudo fallocate -l 2G /swapfile
-    if [ $? -ne 0 ]; then
+    if ! fallocate -l 2G /swapfile; then
         print_error "Failed to create swap file."
-        exit 1
+        return 1
     fi
-    sudo chmod 600 /swapfile
-    sudo mkswap /swapfile
-    sudo swapon /swapfile
+    chmod 600 /swapfile
+    mkswap /swapfile
+    swapon /swapfile
 
     if ! grep -q '^/swapfile ' /etc/fstab; then
         echo '/swapfile none swap sw 0 0' >> /etc/fstab
@@ -734,18 +734,18 @@ configure_swap() {
 
     print_info "Optimizing swap settings (vm.swappiness=10)..."
     if ! grep -q 'vm.swappiness=10' /etc/sysctl.conf; then
-        sudo echo 'vm.swappiness=10' >> /etc/sysctl.conf
-        sudo echo 'vm.vfs_cache_pressure=50' >> / /etc/sysctl.conf
-        sudo sysctl -p
+        echo 'vm.swappiness=10' >> /etc/sysctl.conf
+        echo 'vm.vfs_cache_pressure=50' >> /etc/sysctl.conf
+        sysctl -p > /dev/null
     fi
+
     print_info "Verifying swap configuration..."
-    sudo swapon --show
-    sudo free -h
-    print_success "Swap configuration completed successfully."
+    swapon --show | tee -a "$LOG_FILE"
+    free -h | tee -a "$LOG_FILE"
+    print_success "Swap configured successfully."
 
-    sudo systemctl daemon-reload
-
-    log "Swap configuration completed successfully."
+    systemctl daemon-reload
+    log "Swap configuration completed."
 }
 
 configure_time_sync() {
@@ -754,82 +754,80 @@ configure_time_sync() {
     print_info "Ensuring chrony is active..."
     systemctl enable chrony
     systemctl restart chrony
-    if systemctl is-active chrony; then
-        print_success "chrony is active."
-        sudo chronyc tracking
+    sleep 2 # Allow service to initialize
+
+    if systemctl is-active --quiet chrony; then
+        print_success "Chrony is active and time synchronization is enabled."
+        chronyc tracking | tee -a "$LOG_FILE"
     else
-        print_error "Failed to enable chrony."
+        print_error "Chrony service failed to start."
         exit 1
     fi
 
-    log "Time synchronization completed."
+    log "Time synchronization configuration completed."
 }
 
 final_cleanup() {
     print_section "Final System Cleanup"
 
-    print_info "Running final cleanup..."
-    sudo apt-get update && sudo apt-get upgrade &&& sudo apt-get upgrade
-    sudo apt-get update && sudo apt-get upgrade && sudo apt upgrade
-    sudo apt update && sudo apt upgrade
-    if sudo apt-get update -qq && sudo apt-get upgrade -y -qq &&& sudo apt-get upgrade -y -q && sudo apt-get autoremove -y -qq; then
-        print_info "Final cleanup completed successfully."
+    print_info "Running final system update and cleanup..."
+    if apt-get update -qq && apt-get upgrade -y -qq && apt-get autoremove -y -qq; then
+        print_success "Final system update and cleanup complete."
     else
-        print_error "Final cleanup failed."
+        print_error "Final system cleanup failed."
         exit 1
     fi
-    sudo systemctl daemon-reload
-    print_success "Final cleanup complete."
-    log "Final cleanup completed."
+    systemctl daemon-reload
+    log "Final system cleanup completed."
 }
 
 generate_summary() {
-    print_section "Setup Complete"
+    print_section "Setup Complete!"
 
-    echo -e "${GREEN}Server hardening completed successfully!${NC}"
+    echo -e "${GREEN}Server hardening script has finished successfully.${NC}"
     echo
     echo -e "${YELLOW}Configuration Summary:${NC}"
-    echo -e "${YELLOW}├─ Admin User: ${NC}${USERNAME}"
-    echo -e "${YELLOW}├─ Hostname: ${NC}${SERVER_NAME}${NC}"
-    echo -e "${YELLOW}├─ SSH Port: ${NC}${SSH_PORT}${NC}"
-    echo -e "${YELLOW}└─ Server IP: ${NC}${SERVER_IP}${NC}"
+    echo -e "${YELLOW}├─ Admin User:  ${NC}$USERNAME"
+    echo -e "${YELLOW}├─ Hostname:    ${NC}$SERVER_NAME"
+    echo -e "${YELLOW}├─ SSH Port:    ${NC}$SSH_PORT"
+    echo -e "${YELLOW}└─ Server IP:   ${NC}$SERVER_IP"
     echo
-    echo -e "${PURPLE}Log file: ${LOG_FILE}${NC}"
-    echo -e "${PURPLE}Backups stored in: ${BACKUP_DIR}${NC}"
+    echo -e "${PURPLE}A detailed log of this session is available at: ${LOG_FILE}${NC}"
+    echo -e "${PURPLE}Backups of critical files are stored in: ${BACKUP_DIR}${NC}"
     echo
-    echo -e "${CYAN}Post-Reboot Checks:${NC}"
-    echo -e "${CYAN}1. SSH: ${NC}ssh -p ${SSH_PORT} -v ${USERNAME}@${SERVER_IP}"
-    echo -e "${CYAN}2. Firewall: ${NC}sudo ufw status verbose"
-    echo -e "${CYAN}3. Time Sync: ${NC}sudo chronyc tracking"
-    echo -e "${CYAN}4. Fail2Ban: ${NC}sudo fail2ban-client status sshd"
-    echo -e "${CYAN}5. Swap: ${NC}sudo swapon --show && free -h"
+    echo -e "${CYAN}Post-Reboot Verification Steps:${NC}"
+    echo -e "${CYAN}1. Check SSH access: ${NC}ssh -p $SSH_PORT -v $USERNAME@$SERVER_IP"
+    echo -e "${CYAN}2. Verify firewall rules: ${NC}ufw status verbose"
+    echo -e "${CYAN}3. Confirm time sync: ${NC}chronyc tracking"
+    echo -e "${CYAN}4. Check Fail2Ban: ${NC}fail2ban-client status sshd"
+    echo -e "${CYAN}5. Verify swap: ${NC}swapon --show && free -h"
     if command -v docker >/dev/null 2>&1; then
-        echo -e "${CYAN}6. Docker: ${NC}docker run --rm hello-world"
+        echo -e "${CYAN}6. Test Docker: ${NC}docker run --rm hello-world"
     fi
     echo
 
-    print_warning "Reboot required to apply changes."
+    print_warning "A reboot is required to apply all changes cleanly."
     if [[ $VERBOSE == true ]]; then
         if confirm "Reboot now?" "y"; then
-            print_info "Rebooting... Press Enter or Ctrl+C to cancel."
+            print_info "Rebooting now... Press Enter to proceed or Ctrl+C to cancel."
             read -r
             reboot
         else
-            print_warning "Please reboot manually: sudo reboot"
+            print_warning "Please reboot the server manually by running 'reboot'."
         fi
     else
-        print_warning "Quiet mode: Reboot manually with sudo reboot"
+        print_warning "Running in quiet mode. Please reboot the server manually by running 'reboot'."
     fi
 
-    log "Script completed."
+    log "Script finished successfully."
 }
 
 handle_error() {
     local exit_code=$?
     local line_no=$1
-    print_error "Error on line $line_no (exit code: $exit_code)."
-    print_info "Log file: $LOG_FILE"
-    print_info "Backups in: $BACKUP_DIR"
+    print_error "An error occurred on line $line_no (exit code: $exit_code)."
+    print_info "Check the log file for details: $LOG_FILE"
+    print_info "Backups are available in: $BACKUP_DIR"
     exit $exit_code
 }
 
@@ -838,7 +836,7 @@ main() {
 
     print_header
 
-    # Create log file
+    # Create log file with correct permissions
     touch "$LOG_FILE"
     chmod 600 "$LOG_FILE"
 
@@ -862,5 +860,5 @@ main() {
     generate_summary
 }
 
-# Run main
+# Run main function
 main "$@"
