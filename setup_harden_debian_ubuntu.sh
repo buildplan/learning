@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Debian 12 and Ubuntu Server Hardening Interactive Script
-# Version: 2.7
+# Version: 2.8
 # Compatible with: Debian 12 (Bookworm), Ubuntu 20.04 LTS, 22.04 LTS, 24.04 LTS
 #
 # Description:
@@ -11,7 +11,7 @@
 # production environments.
 #
 # Prerequisites:
-# - Run as root on a fresh Debian 12 or Ubuntu server (e.g., sudo ./harden_debian_ubuntu.sh).
+# - Run as root on a fresh Debian 12 or Ubuntu server (e.g., sudo ./setup_harden_debian_ubuntu.sh).
 # - Internet connectivity is required for package installation.
 #
 # Usage:
@@ -23,7 +23,7 @@
 #
 # Notes:
 # - The script creates a log file in /var/log/setup_harden_debian_ubuntu_*.log.
-# - Critical configurations are backed up before modification. Backup file are at /root/setup_harden_backup_*
+# - Critical configurations are backed up before modification. Backup files are at /root/setup_harden_backup_*.
 # - A reboot is recommended at the end to apply all changes.
 # - Test the script in a VM before production use.
 #
@@ -188,7 +188,7 @@ check_system() {
 
     # Enhanced root check
     if [[ $(whoami) != "root" ]]; then
-        print_error "This script must be run as root (e.g., sudo ./harden_debian_ubuntu.sh)."
+        print_error "This script must be run as root (e.g., sudo ./setup_harden_debian_ubuntu.sh)."
         exit 1
     fi
     print_success "Running with root privileges."
@@ -699,7 +699,6 @@ install_tailscale() {
     rm -f /tmp/tailscale_install.sh
 
     print_warning "ACTION REQUIRED: Run 'tailscale up' after this script finishes."
-
     print_success "Tailscale installation package is complete."
     log "Tailscale installation completed."
 }
