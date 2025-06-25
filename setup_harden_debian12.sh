@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Debian 12 Server Hardening Interactive Script
-# Version: 2.6 (Production-Ready)
+# Version: 2.6
 # Compatible with: Debian 12 (Bookworm)
 #
 # Description:
