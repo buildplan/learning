@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Debian 12 and Ubuntu Server Hardening Interactive Script
-# Version: 2.7 (Production-Ready)
+# Version: 2.7
 # Compatible with: Debian 12 (Bookworm), Ubuntu 20.04 LTS, 22.04 LTS, 24.04 LTS
 #
 # Description:
@@ -67,11 +67,11 @@ log() {
 # Print functions
 print_header() {
     [[ $VERBOSE == false ]] && return
-    echo -e "${CYAN}╔══════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${CYAN}║                                                              ║${NC}"
-    echo -e "${CYAN}║            DEBIAN/UBUNTU SERVER HARDENING SCRIPT             ║${NC}"
-    echo -e "${CYAN}║                                                              ║${NC}"
-    echo -e "${CYAN}╚══════════════════════════════════════════════════════════════╝${NC}"
+    echo -e "${CYAN}╔═════════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║                                                                 ║${NC}"
+    echo -e "${CYAN}║        DEBIAN/UBUNTU SERVER SETUP AND HARDENING SCRIPT          ║${NC}"
+    echo -e "${CYAN}║                                                                 ║${NC}"
+    echo -e "${CYAN}╚═════════════════════════════════════════════════════════════════╝${NC}"
     echo
 }
 
