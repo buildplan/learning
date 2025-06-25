@@ -15,7 +15,7 @@
 # - Internet connectivity is required for package installation.
 #
 # Usage:
-#   Download: weget https://raw.githubusercontent.com/buildplan/learning/refs/heads/main/setup_harden_debian_ubuntu.sh
+#   Download: wget https://raw.githubusercontent.com/buildplan/learning/refs/heads/main/setup_harden_debian_ubuntu.sh
 #   sudo ./setup_harden_debian_ubuntu.sh [--quiet]
 #
 # Options:
