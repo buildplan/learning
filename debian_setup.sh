@@ -16,7 +16,7 @@
 # - Internet connectivity is required for package installation.
 #
 # Usage:
-#   sudo ./harden_debian12.sh [--quiet]
+#   sudo ./debian_setup.sh [--quiet]
 #
 # Options:
 #   --quiet: Suppress non-critical output for automation.
