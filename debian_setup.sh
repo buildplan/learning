@@ -49,6 +49,7 @@ LOG_FILE="/var/log/debian_hardening_$(date +%Y%m%d_%H%M%S).log"
 VERBOSE=true
 BACKUP_DIR="/root/hardening_backups_$(date +%Y%m%d_%H%M%S)"
 IS_CONTAINER=false
+SSHD_BACKUP_FILE=""  # Store SSH config backup filename
 
 # Parse command-line arguments
 while [[ $# -gt 0 ]]; do
@@ -394,7 +395,8 @@ configure_ssh() {
     fi
 
     print_info "Backing up original SSH config..."
-    cp /etc/ssh/sshd_config "$BACKUP_DIR/sshd_config.backup_$(date +%Y%m%d_%H%M%S)"
+    SSHD_BACKUP_FILE="$BACKUP_DIR/sshd_config.backup_$(date +%Y%m%d_%H%M%S)"
+    cp /etc/ssh/sshd_config "$SSHD_BACKUP_FILE"
 
     # Check if SSH config already hardened
     if [[ ! -f /etc/ssh/sshd_config.d/99-hardening.conf ]]; then
@@ -430,7 +432,7 @@ EOF
         fi
     else
         print_error "SSH configuration test failed! Reverting changes."
-        cp "$BACKUP_DIR/sshd_config.backup_$(date +%Y%m%d_%H%M%S)" /etc/ssh/sshd_config
+        cp "$SSHD_BACKUP_FILE" /etc/ssh/sshd_config
         systemctl restart sshd
         exit 1
     fi
@@ -440,7 +442,7 @@ EOF
 
     if ! confirm "Was the new SSH connection successful?"; then
         print_error "Aborting. Restoring original SSH configuration."
-        cp "$BACKUP_DIR/sshd_config.backup_$(date +%Y%m%d_%H%M%S)" /etc/ssh/sshd_config
+        cp "$SSHD_BACKUP_FILE" /etc/ssh/sshd_config
         systemctl restart sshd
         exit 1
     fi
@@ -715,12 +717,16 @@ generate_summary() {
     echo
 
     print_warning "A reboot is required to apply all changes cleanly."
-    if confirm "Reboot now?" "y"; then
-        print_info "Rebooting now... Press Enter to proceed or Ctrl+C to cancel."
-        read -r
-        reboot
+    if [[ $VERBOSE == true ]]; then
+        if confirm "Reboot now?" "y"; then
+            print_info "Rebooting now... Press Enter to proceed or Ctrl+C to cancel."
+            read -r
+            reboot
+        else
+            print_warning "Please reboot the server manually by running 'sudo reboot'."
+        fi
     else
-        print_warning "Please reboot the server manually by running 'sudo reboot'."
+        print_warning "Running in quiet mode. Please reboot the server manually by running 'sudo reboot'."
     fi
 
     log "Script finished successfully."
