@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Debian 12 Server Hardening Interactive Script
-# Version: 2.3 (Production-Ready)
+# Version: 2.4 (Production-Ready)
 # Compatible with: Debian 12 (Bookworm)
 #
 # Description:
@@ -11,8 +11,7 @@
 # production environments.
 #
 # Prerequisites:
-# - Run as root or with sudo on a fresh Debian 12 server.
-# - Ensure an SSH keypair is generated on your local machine for secure access.
+# - Run as root on a fresh Debian 12 server.
 # - Internet connectivity is required for package installation.
 #
 # Usage:
@@ -68,9 +67,9 @@ log() {
 print_header() {
     [[ $VERBOSE == false ]] && return
     echo -e "${CYAN}╔══════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${CYAN}║                                                              ║${NC}"
-    echo -e "${CYAN}║            DEBIAN 12 SERVER HARDENING SCRIPT                 ║${NC}"
-    echo -e "${CYAN}║                                                              ║${NC}"
+    echo -e "${CYAN}║                                                          ║${NC}"
+    echo -e "${CYAN}║            DEBIAN 12 SERVER HARDENING SCRIPT             ║${NC}"
+    echo -e "${CYAN}║                                                          ║${NC}"
     echo -e "${CYAN}╚══════════════════════════════════════════════════════════════╝${NC}"
     echo
 }
@@ -155,14 +154,40 @@ validate_port() {
     return 0
 }
 
+# --- Dependency Check and Installation ---
+check_dependencies() {
+    print_section "Checking Dependencies"
+
+    local missing_deps=()
+    command -v curl >/dev/null || missing_deps+=("curl")
+    command -v sudo >/dev/null || missing_deps+=("sudo")
+
+    if [[ ${#missing_deps[@]} -gt 0 ]]; then
+        print_info "Installing missing dependencies: ${missing_deps[*]}"
+        if ! apt-get update -qq; then
+            print_error "Failed to update package lists."
+            exit 1
+        fi
+        if ! apt-get install -y -qq "${missing_deps[@]}"; then
+            print_error "Failed to install dependencies: ${missing_deps[*]}"
+            exit 1
+        fi
+        print_success "Dependencies installed: ${missing_deps[*]}"
+    else
+        print_success "All dependencies (curl, sudo) are installed."
+    fi
+
+    log "Dependency check completed."
+}
+
 # --- Core Script Functions ---
 
 check_system() {
     print_section "System Compatibility Check"
 
     # Enhanced root check
-    if [[ $(whoami) != "root" ]] && [[ -z $SUDO_USER ]]; then
-        print_error "This script must be run as root or with sudo."
+    if [[ $(whoami) != "root" ]]; then
+        print_error "This script must be run as root."
         print_info "Example: sudo ./harden_debian12.sh"
         exit 1
     fi
@@ -329,10 +354,10 @@ install_packages() {
     print_info "Installing essential packages..."
     if ! apt-get install -y -qq \
         ufw fail2ban unattended-upgrades chrony \
-        rsync curl wget nano vim \
+        rsync wget vim \
         htop iotop nethogs ncdu tree \
         rsyslog cron jq gawk coreutils \
-        perl skopeo git; then
+        perl skopeo git openssh-client; then
         print_error "Failed to install essential packages."
         exit 1
     fi
@@ -381,16 +406,38 @@ configure_ssh() {
     print_section "SSH Hardening"
 
     # Detect current SSH port
-    CURRENT_SSH_PORT=$(ss -tuln | grep -E '0.0.0.0:.*\s+0.0.0.0:\*' | awk '{print $5}' | cut -d':' -f2 || echo "22")
+    CURRENT_SSH_PORT=$(ss -tuln | grep -E ':.*\s+0.0.0.0:\*' | grep sshd | awk '{print $5}' | cut -d':' -f2 || echo "22")
+
+    # Generate SSH key for the user if none exists
+    print_info "Checking SSH key for user '$USERNAME'..."
+    USER_HOME=$(getent passwd "$USERNAME" | cut -d: -f6)
+    SSH_DIR="$USER_HOME/.ssh"
+    SSH_KEY="$SSH_DIR/id_ed25519"
+
+    if [[ ! -f "$SSH_KEY" ]]; then
+        print_info "Generating new SSH key (ed25519) for '$USERNAME'..."
+        mkdir -p "$SSH_DIR"
+        chmod 700 "$SSH_DIR"
+        chown "$USERNAME:$USERNAME" "$SSH_DIR"
+        sudo -u "$USERNAME" ssh-keygen -t ed25519 -f "$SSH_KEY" -N "" -q
+        cat "$SSH_KEY.pub" >> "$SSH_DIR/authorized_keys"
+        chmod 600 "$SSH_DIR/authorized_keys"
+        chown "$USERNAME:$USERNAME" "$SSH_DIR/authorized_keys"
+        print_success "SSH key generated and added to authorized_keys."
+        echo -e "${YELLOW}Public key for remote access:${NC}"
+        cat "$SSH_KEY.pub" | tee -a "$LOG_FILE"
+        echo -e "${YELLOW}Copy this key to your local ~/.ssh/authorized_keys or use 'ssh-copy-id -p $CURRENT_SSH_PORT $USERNAME@$SERVER_IP' from your local machine.${NC}"
+    else
+        print_info "SSH key already exists for '$USERNAME'. Skipping key generation."
+    fi
 
     print_warning "SSH Key Setup Required!"
-    echo -e "${YELLOW}To continue, you MUST copy your SSH public key to the new user on this server.${NC}"
-    echo -e "${YELLOW}Please run this command on your LOCAL machine (NOT this server):${NC}"
-    echo -e "${CYAN}ssh-copy-id -p $CURRENT_SSH_PORT ${USERNAME}@${SERVER_IP}${NC}"
+    echo -e "${YELLOW}Ensure you have copied the public key to your local machine or another secure location.${NC}"
+    echo -e "${CYAN}Test SSH access now in a SEPARATE terminal: ssh -p $CURRENT_SSH_PORT $USERNAME@$SERVER_IP${NC}"
     echo
 
-    if ! confirm "Have you successfully copied your SSH key to the server?"; then
-        print_error "SSH key setup is mandatory. Please copy your key and re-run the script."
+    if ! confirm "Can you successfully connect via SSH with the new key?"; then
+        print_error "SSH key setup is mandatory. Please ensure key-based authentication works and re-run the script."
         exit 1
     fi
 
@@ -639,48 +686,47 @@ install_tailscale() {
         rm -f /tmp/tailscale_install.sh
         exit 1
     fi
+    print_success "Tailscale installation completed successfully."
     rm -f /tmp/tailscale_install.sh
-
     print_warning "ACTION REQUIRED: Run 'sudo tailscale up' after this script finishes."
 
-    print_success "Tailscale installation package is complete."
     log "Tailscale installation completed."
 }
 
 configure_swap() {
     if [[ $IS_CONTAINER == true ]]; then
-        print_info "Swap configuration skipped in container environment."
+        print_info "Skipping swap configuration..."
         return 0
     fi
 
     if swapon --show | grep -q '/swapfile'; then
-        print_info "Swap file already detected. Skipping."
+        print_info "Swap file already exists."
         return 0
     fi
 
-    if ! confirm "Configure a 2GB swap file (Recommended for < 4GB RAM)?"; then
+    if ! confirm "Configure a 2GB swap file (Recommended for < 2GB RAM)?"; then
         print_info "Skipping swap configuration."
         return 0
     fi
 
-    print_section "Swap Configuration"
+    print_section "Configuring Swap"
 
     # Check disk space
     REQUIRED_SPACE=$((2*1024*1024)) # 2GB in KB
-    AVAILABLE_SPACE=$(df -k / | tail -1 | awk '{print $4}')
+    AVAILABLE_SPACE=$(df -k / | tail -v -n 1 | awk '{print $4}')
     if [[ $AVAILABLE_SPACE -lt $REQUIRED_SPACE ]]; then
-        print_error "Insufficient disk space for 2GB swap file. Available: $((AVAILABLE_SPACE/1024))MB"
-        return 1
+        print_error "ERROR: Not enough disk space for 2GB swap file. Available: $((AVAILABLE_SPACE/1024))MB"
+        exit 1
     fi
-
     print_info "Creating 2GB swap file..."
-    if ! fallocate -l 2G /swapfile; then
+    sudo fallocate -l 2G /swapfile
+    if [ $? -ne 0 ]; then
         print_error "Failed to create swap file."
-        return 1
+        exit 1
     fi
-    chmod 600 /swapfile
-    mkswap /swapfile
-    swapon /swapfile
+    sudo chmod 600 /swapfile
+    sudo mkswap /swapfile
+    sudo swapon /swapfile
 
     if ! grep -q '^/swapfile ' /etc/fstab; then
         echo '/swapfile none swap sw 0 0' >> /etc/fstab
@@ -688,19 +734,18 @@ configure_swap() {
 
     print_info "Optimizing swap settings (vm.swappiness=10)..."
     if ! grep -q 'vm.swappiness=10' /etc/sysctl.conf; then
-        echo 'vm.swappiness=10' >> /etc/sysctl.conf
-        echo 'vm.vfs_cache_pressure=50' >> /etc/sysctl.conf
-        sysctl -p > /dev/null
+        sudo echo 'vm.swappiness=10' >> /etc/sysctl.conf
+        sudo echo 'vm.vfs_cache_pressure=50' >> / /etc/sysctl.conf
+        sudo sysctl -p
     fi
-
     print_info "Verifying swap configuration..."
-    swapon --show | tee -a "$LOG_FILE"
-    free -h | tee -a "$LOG_FILE"
-    print_success "Swap configured successfully."
+    sudo swapon --show
+    sudo free -h
+    print_success "Swap configuration completed successfully."
 
-    systemctl daemon-reload
+    sudo systemctl daemon-reload
 
-    log "Swap configuration completed."
+    log "Swap configuration completed successfully."
 }
 
 configure_time_sync() {
@@ -709,80 +754,82 @@ configure_time_sync() {
     print_info "Ensuring chrony is active..."
     systemctl enable chrony
     systemctl restart chrony
-    sleep 2 # Allow service to initialize
-
-    if systemctl is-active --quiet chrony; then
-        print_success "Chrony is active for time synchronization."
-        chronyc tracking | tee -a "$LOG_FILE"
+    if systemctl is-active chrony; then
+        print_success "chrony is active."
+        sudo chronyc tracking
     else
-        print_error "Chrony service failed to start."
+        print_error "Failed to enable chrony."
         exit 1
     fi
 
-    log "Time synchronization configuration completed."
+    log "Time synchronization completed."
 }
 
 final_cleanup() {
     print_section "Final System Cleanup"
 
-    print_info "Running final system update and cleanup..."
-    if ! DEBIAN_FRONTEND=noninteractive apt-get update -qq || ! apt-get upgrade -y -qq || ! apt-get autoremove -y -qq; then
-        print_error "Final system update and cleanup failed."
+    print_info "Running final cleanup..."
+    sudo apt-get update && sudo apt-get upgrade &&& sudo apt-get upgrade
+    sudo apt-get update && sudo apt-get upgrade && sudo apt upgrade
+    sudo apt update && sudo apt upgrade
+    if sudo apt-get update -qq && sudo apt-get upgrade -y -qq &&& sudo apt-get upgrade -y -q && sudo apt-get autoremove -y -qq; then
+        print_info "Final cleanup completed successfully."
+    else
+        print_error "Final cleanup failed."
         exit 1
     fi
-
-    systemctl daemon-reload
+    sudo systemctl daemon-reload
     print_success "Final cleanup complete."
-    log "Final system configuration completed."
+    log "Final cleanup completed."
 }
 
 generate_summary() {
-    print_section "Setup Complete!"
+    print_section "Setup Complete"
 
-    echo -e "${GREEN}Server hardening script has finished successfully.${NC}"
+    echo -e "${GREEN}Server hardening completed successfully!${NC}"
     echo
     echo -e "${YELLOW}Configuration Summary:${NC}"
-    echo -e "${YELLOW}├─ Admin User:  ${NC}$USERNAME"
-    echo -e "${YELLOW}├─ Hostname:    ${NC}$SERVER_NAME"
-    echo -e "${YELLOW}├─ SSH Port:    ${NC}$SSH_PORT"
-    echo -e "${YELLOW}└─ Server IP:   ${NC}$SERVER_IP"
+    echo -e "${YELLOW}├─ Admin User: ${NC}${USERNAME}"
+    echo -e "${YELLOW}├─ Hostname: ${NC}${SERVER_NAME}${NC}"
+    echo -e "${YELLOW}├─ SSH Port: ${NC}${SSH_PORT}${NC}"
+    echo -e "${YELLOW}└─ Server IP: ${NC}${SERVER_IP}${NC}"
     echo
-    echo -e "${PURPLE}A detailed log of this session is available at: ${LOG_FILE}${NC}"
-    echo -e "${PURPLE}Backups of critical files are stored in: ${BACKUP_DIR}${NC}"
+    echo -e "${PURPLE}Log file: ${LOG_FILE}${NC}"
+    echo -e "${PURPLE}Backups stored in: ${BACKUP_DIR}${NC}"
     echo
-    echo -e "${CYAN}Post-Reboot Verification Steps:${NC}"
-    echo -e "${CYAN}1. Check SSH access: ${NC}ssh -p $SSH_PORT -v $USERNAME@$SERVER_IP"
-    echo -e "${CYAN}2. Verify firewall rules: ${NC}sudo ufw status verbose"
-    echo -e "${CYAN}3. Confirm time sync: ${NC}chronyc tracking"
-    echo -e "${CYAN}4. Check Fail2Ban: ${NC}sudo fail2ban-client status sshd"
-    echo -e "${CYAN}5. Verify swap: ${NC}swapon --show && free -h"
+    echo -e "${CYAN}Post-Reboot Checks:${NC}"
+    echo -e "${CYAN}1. SSH: ${NC}ssh -p ${SSH_PORT} -v ${USERNAME}@${SERVER_IP}"
+    echo -e "${CYAN}2. Firewall: ${NC}sudo ufw status verbose"
+    echo -e "${CYAN}3. Time Sync: ${NC}sudo chronyc tracking"
+    echo -e "${CYAN}4. Fail2Ban: ${NC}sudo fail2ban-client status sshd"
+    echo -e "${CYAN}5. Swap: ${NC}sudo swapon --show && free -h"
     if command -v docker >/dev/null 2>&1; then
-        echo -e "${CYAN}6. Test Docker: ${NC}docker run --rm hello-world"
+        echo -e "${CYAN}6. Docker: ${NC}docker run --rm hello-world"
     fi
     echo
 
-    print_warning "A reboot is required to apply all changes cleanly."
+    print_warning "Reboot required to apply changes."
     if [[ $VERBOSE == true ]]; then
         if confirm "Reboot now?" "y"; then
-            print_info "Rebooting now... Press Enter to proceed or Ctrl+C to cancel."
+            print_info "Rebooting... Press Enter or Ctrl+C to cancel."
             read -r
             reboot
         else
-            print_warning "Please reboot the server manually by running 'sudo reboot'."
+            print_warning "Please reboot manually: sudo reboot"
         fi
     else
-        print_warning "Running in quiet mode. Please reboot the server manually by running 'sudo reboot'."
+        print_warning "Quiet mode: Reboot manually with sudo reboot"
     fi
 
-    log "Script finished successfully."
+    log "Script completed."
 }
 
 handle_error() {
     local exit_code=$?
     local line_no=$1
-    print_error "An error occurred on line $line_no (exit code: $exit_code)."
-    print_info "Check the log file for details: $LOG_FILE"
-    print_info "Backups are available in: $BACKUP_DIR"
+    print_error "Error on line $line_no (exit code: $exit_code)."
+    print_info "Log file: $LOG_FILE"
+    print_info "Backups in: $BACKUP_DIR"
     exit $exit_code
 }
 
@@ -791,12 +838,13 @@ main() {
 
     print_header
 
-    # Create log file with correct permissions
+    # Create log file
     touch "$LOG_FILE"
     chmod 600 "$LOG_FILE"
 
     log "Starting Debian 12 hardening script."
 
+    check_dependencies
     check_system
     collect_config
     configure_system
@@ -814,5 +862,5 @@ main() {
     generate_summary
 }
 
-# Run main function
+# Run main
 main "$@"
