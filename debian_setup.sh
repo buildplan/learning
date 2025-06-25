@@ -1,8 +1,36 @@
 #!/bin/bash
 
 # Debian 12 Server Hardening Interactive Script
-# Version: 2.1 (Reviewed & Corrected)
+# Version: 2.2 (Enhanced for Production)
 # Compatible with: Debian 12 (Bookworm)
+#
+# Description:
+# This script provisions and hardens a fresh Debian 12 server with essential security
+# configurations, user management, SSH hardening, firewall setup, and optional features
+# like Docker and Tailscale. It is designed to be idempotent, safe, and suitable for
+# production environments.
+#
+# Prerequisites:
+# - Run as root or with sudo on a fresh Debian 12 server.
+# - Ensure an SSH keypair is generated on your local machine for secure access.
+# - Internet connectivity is required for package installation.
+#
+# Usage:
+#   sudo ./harden_debian12.sh [--quiet]
+#
+# Options:
+#   --quiet: Suppress non-critical output for automation.
+#
+# Notes:
+# - The script creates a log file in /var/log/debian_hardening_*.log.
+# - Critical configurations are backed up before modification.
+# - A reboot is recommended at the end to apply all changes.
+# - Test the script in a VM before production use.
+#
+# Troubleshooting:
+# - Check the log file for errors if the script fails.
+# - If SSH access is lost, use the server console to restore /etc/ssh/sshd_config.backup_*.
+# - Ensure sufficient disk space (>2GB) for swap file creation.
 
 set -euo pipefail  # Exit on error, undefined vars, pipe failures
 
@@ -18,15 +46,26 @@ NC='\033[0m' # No Color
 # Global variables
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOG_FILE="/var/log/debian_hardening_$(date +%Y%m%d_%H%M%S).log"
+VERBOSE=true
+BACKUP_DIR="/root/hardening_backups_$(date +%Y%m%d_%H%M%S)"
+IS_CONTAINER=false
+
+# Parse command-line arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --quiet) VERBOSE=false; shift ;;
+        *) shift ;;
+    esac
+done
 
 # Logging function
 log() {
-    # Prepend date and time to the message and append to the log file
     echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> "$LOG_FILE"
 }
 
 # Print functions
 print_header() {
+    [[ $VERBOSE == false ]] && return
     echo -e "${CYAN}╔══════════════════════════════════════════════════════════════╗${NC}"
     echo -e "${CYAN}║                                                          ║${NC}"
     echo -e "${CYAN}║            DEBIAN 12 SERVER HARDENING SCRIPT             ║${NC}"
@@ -36,15 +75,18 @@ print_header() {
 }
 
 print_section() {
+    [[ $VERBOSE == false ]] && return
     echo -e "\n${BLUE}▓▓▓ $1 ▓▓▓${NC}" | tee -a "$LOG_FILE"
     echo -e "${BLUE}$(printf '═%.0s' {1..60})${NC}"
 }
 
 print_success() {
+    [[ $VERBOSE == false ]] && return
     echo -e "${GREEN}✓ $1${NC}" | tee -a "$LOG_FILE"
 }
 
 print_warning() {
+    [[ $VERBOSE == false ]] && return
     echo -e "${YELLOW}⚠ $1${NC}" | tee -a "$LOG_FILE"
 }
 
@@ -53,6 +95,7 @@ print_error() {
 }
 
 print_info() {
+    [[ $VERBOSE == false ]] && return
     echo -e "${PURPLE}ℹ $1${NC}" | tee -a "$LOG_FILE"
 }
 
@@ -61,6 +104,8 @@ confirm() {
     local prompt="$1"
     local default="${2:-n}"
     local response
+
+    [[ $VERBOSE == false ]] && return 0  # Auto-confirm in quiet mode
 
     if [[ $default == "y" ]]; then
         prompt="$prompt [Y/n]: "
@@ -95,10 +140,10 @@ validate_username() {
 
 validate_hostname() {
     local hostname="$1"
-    if [[ ! $hostname =~ ^[a-zA-Z0-9][a-zA-Z0-9-]{0,61}[a-zA-Z0-9]$ ]]; then
-        return 1
+    if [[ $hostname =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]{0,253}[a-zA-Z0-9]$ ]] && [[ ! $hostname =~ \.\. ]]; then
+        return 0
     fi
-    return 0
+    return 1
 }
 
 validate_port() {
@@ -113,15 +158,21 @@ validate_port() {
 
 check_system() {
     print_section "System Compatibility Check"
-    
-    # CORRECTED: This script must be run by root on a new server to create the first admin user.
-    if [[ $EUID -ne 0 ]]; then
+
+    # Enhanced root check
+    if [[ $(whoami) != "root" ]] && [[ -z $SUDO_USER ]]; then
         print_error "This script must be run as root or with sudo."
-        print_info "Example: sudo ./this_script.sh"
+        print_info "Example: sudo ./harden_debian12.sh"
         exit 1
     fi
     print_success "Running with root privileges."
-    
+
+    # Check for container environment
+    if [[ -f /proc/1/cgroup ]] && grep -qE '(docker|lxc|kubepod)' /proc/1/cgroup; then
+        IS_CONTAINER=true
+        print_warning "Container environment detected. Some features (e.g., swap) will be skipped."
+    fi
+
     # Check Debian version
     if [[ -f /etc/os-release ]]; then
         source /etc/os-release
@@ -137,21 +188,27 @@ check_system() {
         print_error "This doesn't appear to be a Debian system."
         exit 1
     fi
-    
-    # Check internet connectivity
-    if ping -c 1 8.8.8.8 &> /dev/null; then
+
+    # Enhanced internet connectivity check
+    if curl -s --head http://deb.debian.org >/dev/null; then
         print_success "Internet connectivity confirmed."
     else
         print_error "No internet connectivity. Please check your network."
         exit 1
     fi
-    
+
+    # Create log directory
+    if [[ ! -w /var/log ]]; then
+        print_error "/var/log is not writable. Cannot create log file."
+        exit 1
+    fi
+
     log "System compatibility check completed successfully."
 }
 
 collect_config() {
     print_section "Configuration Setup"
-    
+
     while true; do
         read -rp "$(echo -e "${CYAN}Enter username for new admin user: ${NC}")" USERNAME
         if validate_username "$USERNAME"; then
@@ -169,19 +226,19 @@ collect_config() {
             print_error "Invalid username. Use lowercase letters, numbers, hyphens, underscores (max 32 chars)."
         fi
     done
-    
+
     while true; do
         read -rp "$(echo -e "${CYAN}Enter server hostname: ${NC}")" SERVER_NAME
         if validate_hostname "$SERVER_NAME"; then
             break
         else
-            print_error "Invalid hostname. Use letters, numbers, and hyphens."
+            print_error "Invalid hostname. Use letters, numbers, hyphens, or dots for FQDN."
         fi
     done
-    
+
     read -rp "$(echo -e "${CYAN}Enter a 'pretty' hostname (optional): ${NC}")" PRETTY_NAME
     [[ -z "$PRETTY_NAME" ]] && PRETTY_NAME="$SERVER_NAME"
-    
+
     while true; do
         read -rp "$(echo -e "${CYAN}Enter custom SSH port (1024-65535) [2222]: ${NC}")" SSH_PORT
         SSH_PORT=${SSH_PORT:-2222}
@@ -191,118 +248,158 @@ collect_config() {
             print_error "Invalid port. Must be a number between 1024 and 65535."
         fi
     done
-    
+
     SERVER_IP=$(curl -s ifconfig.me 2>/dev/null || echo "unknown")
     print_info "Detected server IP: $SERVER_IP"
-    
+
     echo -e "\n${YELLOW}Configuration Summary:${NC}"
     echo -e "${YELLOW}├─ Username:    ${NC}$USERNAME"
     echo -e "${YELLOW}├─ Hostname:    ${NC}$SERVER_NAME"
     echo -e "${YELLOW}├─ Pretty Name: ${NC}$PRETTY_NAME"
     echo -e "${YELLOW}├─ SSH Port:    ${NC}$SSH_PORT"
     echo -e "${YELLOW}└─ Server IP:   ${NC}$SERVER_IP"
-    
+
     if ! confirm "\nContinue with this configuration?" "y"; then
         print_info "Configuration cancelled. Exiting."
         exit 0
     fi
-    
+
     log "Configuration collected: USER=$USERNAME, HOST=$SERVER_NAME, PORT=$SSH_PORT"
 }
 
 configure_system() {
     print_section "System Configuration"
-    
+
+    # Create backup directory
+    mkdir -p "$BACKUP_DIR"
+    chmod 700 "$BACKUP_DIR"
+
+    # Backup critical files
+    cp /etc/hosts "$BACKUP_DIR/hosts.backup"
+    cp /etc/fstab "$BACKUP_DIR/fstab.backup"
+    cp /etc/sysctl.conf "$BACKUP_DIR/sysctl.conf.backup" 2>/dev/null || true
+
     print_info "Setting timezone to UTC..."
-    timedatectl set-timezone Etc/UTC
-    print_success "Timezone set to UTC."
-    
+    if ! timedatectl status | grep -q "Time zone: Etc/UTC"; then
+        timedatectl set-timezone Etc/UTC
+        print_success "Timezone set to UTC."
+    else
+        print_info "Timezone already set to UTC."
+    fi
+
     if confirm "Configure system locales interactively?"; then
         dpkg-reconfigure locales
     else
         print_info "Skipping locale configuration."
     fi
-    
+
     print_info "Configuring hostname..."
-    hostnamectl set-hostname "$SERVER_NAME"
-    hostnamectl set-hostname "$PRETTY_NAME" --pretty
-    
-    if grep -q "^127.0.1.1" /etc/hosts; then
-        sed -i "s/^127.0.1.1.*/127.0.1.1\t$SERVER_NAME/" /etc/hosts
+    if [[ $(hostnamectl --static) != "$SERVER_NAME" ]]; then
+        hostnamectl set-hostname "$SERVER_NAME"
+        hostnamectl set-hostname "$PRETTY_NAME" --pretty
+        if grep -q "^127.0.1.1" /etc/hosts; then
+            sed -i "s/^127.0.1.1.*/127.0.1.1\t$SERVER_NAME/" /etc/hosts
+        else
+            echo "127.0.1.1 $SERVER_NAME" >> /etc/hosts
+        fi
+        print_success "Hostname configured: $SERVER_NAME"
     else
-        echo "127.0.1.1 $SERVER_NAME" >> /etc/hosts
+        print_info "Hostname already set to $SERVER_NAME."
     fi
-    
-    print_success "Hostname configured: $SERVER_NAME"
+
     log "System configuration completed."
 }
 
 install_packages() {
     print_section "Package Installation"
-    
+
     print_info "Updating package lists..."
-    apt-get update -qq
-    
+    if ! apt-get update -qq; then
+        print_error "Failed to update package lists."
+        exit 1
+    fi
+
     print_info "Upgrading system packages..."
-    DEBIAN_FRONTEND=noninteractive apt-get upgrade -y -qq
-    
+    if ! DEBIAN_FRONTEND=noninteractive apt-get upgrade -y -qq; then
+        print_error "Failed to upgrade system packages."
+        exit 1
+    fi
+
     print_info "Installing essential packages..."
-    apt-get install -y -qq \
+    if ! apt-get install -y -qq \
         ufw fail2ban unattended-upgrades \
         rsync curl wget nano vim \
         htop iotop nethogs ncdu tree \
         rsyslog cron jq gawk coreutils \
-        perl skopeo git
-    
+        perl skopeo git; then
+        print_error "Failed to install essential packages."
+        exit 1
+    fi
+
     print_success "Package installation complete."
     log "Package installation completed."
 }
 
 setup_user() {
     print_section "User Management"
-    
+
     if [[ $USER_EXISTS == false ]]; then
         print_info "Creating user '$USERNAME'..."
-        adduser --disabled-password --gecos "" "$USERNAME"
+        if ! adduser --disabled-password --gecos "" "$USERNAME"; then
+            print_error "Failed to create user '$USERNAME'."
+            exit 1
+        fi
         print_info "Please set a password for the new user."
-        passwd "$USERNAME"
+        if ! passwd "$USERNAME"; then
+            print_error "Failed to set password for '$USERNAME'."
+            exit 1
+        fi
         print_success "User created: $USERNAME"
     else
         print_info "Using existing user: $USERNAME"
     fi
-    
+
     print_info "Adding '$USERNAME' to sudo group..."
-    usermod -aG sudo "$USERNAME"
-    print_success "User added to sudo group."
-    
+    if ! groups "$USERNAME" | grep -q sudo; then
+        usermod -aG sudo "$USERNAME"
+        print_success "User added to sudo group."
+    else
+        print_info "User '$USERNAME' already in sudo group."
+    fi
+
     if sudo -u "$USERNAME" sudo -n true 2>/dev/null; then
         print_success "Sudo access confirmed for $USERNAME."
     else
         print_warning "Could not auto-verify sudo access for $USERNAME. Please test manually."
     fi
-    
+
     log "User management completed for: $USERNAME."
 }
 
 configure_ssh() {
     print_section "SSH Hardening"
 
+    # Detect current SSH port
+    CURRENT_SSH_PORT=$(ss -tuln | grep -E '0.0.0.0:.*\s+0.0.0.0:\*' | awk '{print $5}' | cut -d':' -f2 || echo "22")
+
     print_warning "SSH Key Setup Required!"
     echo -e "${YELLOW}To continue, you MUST copy your SSH public key to the new user on this server.${NC}"
     echo -e "${YELLOW}Please run this command on your LOCAL machine (NOT this server):${NC}"
-    echo -e "${CYAN}ssh-copy-id -p 22 ${USERNAME}@${SERVER_IP}${NC}"
+    echo -e "${CYAN}ssh-copy-id -p $CURRENT_SSH_PORT ${USERNAME}@${SERVER_IP}${NC}"
     echo
-    
+
     if ! confirm "Have you successfully copied your SSH key to the server?"; then
         print_error "SSH key setup is mandatory. Please copy your key and re-run the script."
         exit 1
     fi
-    
+
     print_info "Backing up original SSH config..."
-    cp /etc/ssh/sshd_config /etc/ssh/sshd_config.backup
-    
-    print_info "Creating hardened SSH configuration..."
-    tee /etc/ssh/sshd_config.d/99-hardening.conf > /dev/null <<EOF
+    cp /etc/ssh/sshd_config "$BACKUP_DIR/sshd_config.backup_$(date +%Y%m%d_%H%M%S)"
+
+    # Check if SSH config already hardened
+    if [[ ! -f /etc/ssh/sshd_config.d/99-hardening.conf ]]; then
+        print_info "Creating hardened SSH configuration..."
+        tee /etc/ssh/sshd_config.d/99-hardening.conf > /dev/null <<EOF
 # Custom SSH Security Configuration
 Port $SSH_PORT
 PermitRootLogin no
@@ -314,111 +411,142 @@ X11Forwarding no
 PrintMotd no
 Banner /etc/issue.net
 EOF
-    
-    tee /etc/issue.net > /dev/null <<'EOF'
+
+        tee /etc/issue.net > /dev/null <<'EOF'
 ******************************************************************************
                         AUTHORIZED ACCESS ONLY
 ******************************************************************************
 EOF
+    else
+        print_info "SSH configuration already hardened. Skipping."
+    fi
 
     print_info "Testing SSH configuration..."
     if sshd -t; then
         print_success "SSH configuration test passed."
-        systemctl restart sshd
-        print_success "SSH service restarted."
+        if ! systemctl is-active --quiet sshd; then
+            systemctl restart sshd
+            print_success "SSH service restarted."
+        fi
     else
         print_error "SSH configuration test failed! Reverting changes."
-        cp /etc/ssh/sshd_config.backup /etc/ssh/sshd_config
-        exit 1
-    fi
-    
-    print_warning "CRITICAL: Test the new SSH connection in a SEPARATE terminal NOW!"
-    print_info "Use this command: ssh -p $SSH_PORT $USERNAME@$SERVER_IP"
-    
-    if ! confirm "Was the new SSH connection successful?"; then
-        print_error "Aborting. Your original SSH configuration has been restored."
-        cp /etc/ssh/sshd_config.backup /etc/ssh/sshd_config
+        cp "$BACKUP_DIR/sshd_config.backup_$(date +%Y%m%d_%H%M%S)" /etc/ssh/sshd_config
         systemctl restart sshd
         exit 1
     fi
-    
+
+    print_warning "CRITICAL: Test the new SSH connection in a SEPARATE terminal NOW!"
+    print_info "Use this command: ssh -p $SSH_PORT $USERNAME@$SERVER_IP"
+
+    if ! confirm "Was the new SSH connection successful?"; then
+        print_error "Aborting. Restoring original SSH configuration."
+        cp "$BACKUP_DIR/sshd_config.backup_$(date +%Y%m%d_%H%M%S)" /etc/ssh/sshd_config
+        systemctl restart sshd
+        exit 1
+    fi
+
     log "SSH hardening completed on port $SSH_PORT."
 }
 
 configure_firewall() {
     print_section "Firewall Configuration (UFW)"
-    
-    print_info "Configuring UFW default policies..."
-    # CORRECTED: Removed invalid --force flag from default commands
-    ufw default deny incoming
-    ufw default allow outgoing
-    
-    print_info "Adding SSH rule for port $SSH_PORT..."
-    ufw allow "$SSH_PORT"/tcp comment 'Custom SSH'
-    
+
+    # Check if UFW is already enabled
+    if ufw status | grep -q "Status: active"; then
+        print_info "UFW already enabled. Checking rules..."
+    else
+        print_info "Configuring UFW default policies..."
+        ufw default deny incoming
+        ufw default allow outgoing
+    fi
+
+    # Add SSH rule only if not already present
+    if ! ufw status | grep -q "$SSH_PORT/tcp"; then
+        print_info "Adding SSH rule for port $SSH_PORT..."
+        ufw allow "$SSH_PORT"/tcp comment 'Custom SSH'
+    else
+        print_info "SSH rule for port $SSH_PORT already exists."
+    fi
+
     if confirm "Allow HTTP traffic (port 80)?"; then
-        ufw allow 80/tcp comment 'HTTP'
-        print_success "HTTP traffic allowed."
+        if ! ufw status | grep -q "80/tcp"; then
+            ufw allow 80/tcp comment 'HTTP'
+            print_success "HTTP traffic allowed."
+        else
+            print_info "HTTP rule already exists."
+        fi
     fi
-    
+
     if confirm "Allow HTTPS traffic (port 443)?"; then
-        ufw allow 443/tcp comment 'HTTPS'
-        print_success "HTTPS traffic allowed."
+        if ! ufw status | grep -q "443/tcp"; then
+            ufw allow 443/tcp comment 'HTTPS'
+            print_success "HTTPS traffic allowed."
+        else
+            print_info "HTTPS rule already exists."
+        fi
     fi
-    
+
     print_info "Enabling firewall..."
-    ufw --force enable
-    
+    ufw enable
+
     print_success "Firewall is active."
     ufw status verbose | tee -a "$LOG_FILE"
-    
+
     log "Firewall configuration completed."
 }
 
 configure_fail2ban() {
     print_section "Fail2Ban Configuration"
-    
-    print_info "Creating Fail2Ban local jail configuration..."
-    tee /etc/fail2ban/jail.local > /dev/null <<EOF
+
+    if [[ ! -f /etc/fail2ban/jail.local ]]; then
+        print_info "Creating Fail2Ban local jail configuration..."
+        tee /etc/fail2ban/jail.local > /dev/null <<EOF
 [DEFAULT]
 bantime = 1h
 findtime = 10m
 maxretry = 3
-backend = systemd
+backend = auto
 
 [sshd]
 enabled = true
 port = $SSH_PORT
 EOF
-    
+    else
+        print_info "Fail2Ban configuration already exists. Updating port if needed..."
+        sed -i "s/port = .*/port = $SSH_PORT/" /etc/fail2ban/jail.local
+    fi
+
     print_info "Enabling and restarting Fail2Ban..."
     systemctl enable fail2ban
     systemctl restart fail2ban
     sleep 2 # Give service time to initialize
-    
+
     if systemctl is-active --quiet fail2ban; then
         print_success "Fail2Ban is active and monitoring port $SSH_PORT."
         fail2ban-client status sshd | tee -a "$LOG_FILE"
     else
         print_error "Fail2Ban service failed to start."
     fi
-    
+
     log "Fail2Ban configuration completed."
 }
 
 configure_auto_updates() {
     print_section "Automatic Security Updates"
-    
+
     if confirm "Enable automatic security updates via unattended-upgrades?"; then
+        if ! dpkg -l unattended-upgrades | grep -q ^ii; then
+            print_error "unattended-upgrades package not installed."
+            exit 1
+        fi
         print_info "Configuring unattended upgrades..."
-        # Use non-interactive frontend to pre-seed the correct answer
         echo "unattended-upgrades unattended-upgrades/enable_auto_updates boolean true" | debconf-set-selections
         DEBIAN_FRONTEND=noninteractive dpkg-reconfigure -fnoninteractive unattended-upgrades
         print_success "Automatic updates enabled."
     else
         print_info "Skipping automatic updates."
     fi
-    
+
     log "Automatic updates configuration completed."
 }
 
@@ -427,25 +555,35 @@ install_docker() {
         print_info "Skipping Docker installation."
         return 0
     fi
-    
+
     print_section "Docker Installation"
-    
+
+    if command -v docker >/dev/null 2>&1; then
+        print_info "Docker already installed. Skipping."
+        return 0
+    fi
+
     print_info "Adding Docker's official GPG key and repository..."
     install -m 0755 -d /etc/apt/keyrings
     curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
     chmod a+r /etc/apt/keyrings/docker.gpg
-    
+
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian $(. /etc/os-release && echo "$VERSION_CODENAME") stable" > /etc/apt/sources.list.d/docker.list
-    
+
     print_info "Installing Docker packages..."
-    apt-get update -qq
-    apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-    
+    if ! apt-get update -qq || ! apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin; then
+        print_error "Failed to install Docker packages."
+        exit 1
+    fi
+
     print_info "Adding '$USERNAME' to docker group..."
-    usermod -aG docker "$USERNAME"
-    
+    if ! groups "$USERNAME" | grep -q docker; then
+        usermod -aG docker "$USERNAME"
+    fi
+
     print_info "Configuring Docker daemon with log rotation..."
-    tee /etc/docker/daemon.json > /dev/null <<EOF
+    if [[ ! -f /etc/docker/daemon.json ]]; then
+        tee /etc/docker/daemon.json > /dev/null <<EOF
 {
   "log-driver": "json-file",
   "log-opts": {
@@ -455,10 +593,11 @@ install_docker() {
   "live-restore": true
 }
 EOF
-    
+    fi
+
     systemctl enable docker
     systemctl restart docker
-    
+
     print_success "Docker installation completed."
     print_warning "NOTE: '$USERNAME' must log out and back in to use Docker without sudo."
     log "Docker installation completed."
@@ -471,17 +610,34 @@ install_tailscale() {
     fi
 
     print_section "Tailscale VPN Installation"
-    
+
+    if command -v tailscale >/dev/null 2>&1; then
+        print_info "Tailscale already installed. Skipping."
+        return 0
+    fi
+
     print_info "Installing Tailscale..."
-    curl -fsSL https://tailscale.com/install.sh | sh
-    
+    curl -fsSL https://tailscale.com/install.sh -o /tmp/tailscale_install.sh
+    chmod +x /tmp/tailscale_install.sh
+    if ! /tmp/tailscale_install.sh; then
+        print_error "Failed to install Tailscale."
+        rm -f /tmp/tailscale_install.sh
+        exit 1
+    fi
+    rm -f /tmp/tailscale_install.sh
+
     print_warning "ACTION REQUIRED: Run 'sudo tailscale up' after this script finishes."
-    
+
     print_success "Tailscale installation package is complete."
     log "Tailscale installation completed."
 }
 
 configure_swap() {
+    if [[ $IS_CONTAINER == true ]]; then
+        print_info "Swap configuration skipped in container environment."
+        return 0
+    fi
+
     if swapon --show | grep -q '/swapfile'; then
         print_info "Swap file already detected. Skipping."
         return 0
@@ -491,26 +647,37 @@ configure_swap() {
         print_info "Skipping swap configuration."
         return 0
     fi
-    
+
     print_section "Swap Configuration"
-    
+
+    # Check disk space
+    REQUIRED_SPACE=$((2*1024*1024)) # 2GB in KB
+    AVAILABLE_SPACE=$(df -k / | tail -1 | awk '{print $4}')
+    if [[ $AVAILABLE_SPACE -lt $REQUIRED_SPACE ]]; then
+        print_error "Insufficient disk space for 2GB swap file. Available: $((AVAILABLE_SPACE/1024))MB"
+        return 1
+    fi
+
     print_info "Creating 2GB swap file..."
-    fallocate -l 2G /swapfile
+    if ! fallocate -l 2G /swapfile; then
+        print_error "Failed to create swap file."
+        return 1
+    fi
     chmod 600 /swapfile
     mkswap /swapfile
     swapon /swapfile
-    
+
     if ! grep -q '^/swapfile ' /etc/fstab; then
         echo '/swapfile none swap sw 0 0' >> /etc/fstab
     fi
-    
+
     print_info "Optimizing swap settings (vm.swappiness=10)..."
-    sed -i '/vm.swappiness/d' /etc/sysctl.conf
-    sed -i '/vm.vfs_cache_pressure/d' /etc/sysctl.conf
-    echo 'vm.swappiness=10' >> /etc/sysctl.conf
-    echo 'vm.vfs_cache_pressure=50' >> /etc/sysctl.conf
-    sysctl -p > /dev/null
-    
+    if ! grep -q 'vm.swappiness=10' /etc/sysctl.conf; then
+        echo 'vm.swappiness=10' >> /etc/sysctl.conf
+        echo 'vm.vfs_cache_pressure=50' >> /etc/sysctl.conf
+        sysctl -p > /dev/null
+    fi
+
     print_success "Swap configured successfully."
     free -h | tee -a "$LOG_FILE"
     log "Swap configuration completed."
@@ -518,20 +685,23 @@ configure_swap() {
 
 final_cleanup() {
     print_section "Final System Cleanup"
-    
+
     print_info "Running final system update and cleanup..."
-    DEBIAN_FRONTEND=noninteractive apt-get update -qq && apt-get upgrade -y -qq && apt-get autoremove -y -qq
-    
+    if ! DEBIAN_FRONTEND=noninteractive apt-get update -qq || ! apt-get upgrade -y -qq || ! apt-get autoremove -y -qq; then
+        print_error "Final system update and cleanup failed."
+        exit 1
+    fi
+
     print_info "Enabling NTP for time synchronization..."
     timedatectl set-ntp true
-    
+
     print_success "Final cleanup complete."
     log "Final system configuration completed."
 }
 
 generate_summary() {
     print_section "Setup Complete!"
-    
+
     echo -e "${GREEN}Server hardening script has finished successfully.${NC}"
     echo
     echo -e "${YELLOW}Configuration Summary:${NC}"
@@ -541,17 +711,18 @@ generate_summary() {
     echo -e "${YELLOW}└─ Server IP:   ${NC}$SERVER_IP"
     echo
     echo -e "${PURPLE}A detailed log of this session is available at: ${LOG_FILE}${NC}"
+    echo -e "${PURPLE}Backups of critical files are stored in: ${BACKUP_DIR}${NC}"
     echo
-    
+
     print_warning "A reboot is required to apply all changes cleanly."
     if confirm "Reboot now?" "y"; then
-        print_info "Rebooting in 5 seconds... (Press Ctrl+C to cancel)"
-        sleep 5
+        print_info "Rebooting now... Press Enter to proceed or Ctrl+C to cancel."
+        read -r
         reboot
     else
         print_warning "Please reboot the server manually by running 'sudo reboot'."
     fi
-    
+
     log "Script finished successfully."
 }
 
@@ -560,20 +731,21 @@ handle_error() {
     local line_no=$1
     print_error "An error occurred on line $line_no (exit code: $exit_code)."
     print_info "Check the log file for details: $LOG_FILE"
+    print_info "Backups are available in: $BACKUP_DIR"
     exit $exit_code
 }
 
 main() {
     trap 'handle_error $LINENO' ERR
-    
+
     print_header
-    
+
     # Create log file with correct permissions
     touch "$LOG_FILE"
     chmod 600 "$LOG_FILE"
 
     log "Starting Debian 12 hardening script."
-    
+
     check_system
     collect_config
     configure_system
@@ -590,5 +762,5 @@ main() {
     generate_summary
 }
 
-# Run main function, passing all arguments to it
+# Run main function
 main "$@"
