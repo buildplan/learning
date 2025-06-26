@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Debian 12 and Ubuntu Server Hardening Interactive Script
-# Version: 3.1 | 2025-06-26
+# Version: 3.2 | 2025-06-26
 # Compatible with: Debian 12 (Bookworm), Ubuntu 20.04 LTS, 22.04 LTS, 24.04 LTS
 #
 # Description:
@@ -55,6 +55,7 @@ BACKUP_DIR="/root/setup_harden_backup_$(date +%Y%m%d_%H%M%S)"
 IS_CONTAINER=false
 SSHD_BACKUP_FILE=""  # Store SSH config backup filename
 LOCAL_KEY_ADDED=false  # Track if a local SSH key was added
+SSH_SERVICE=""  # Dynamically set to ssh or sshd based on OS
 
 # Logging function
 log() {
@@ -229,6 +230,26 @@ check_system() {
         exit 1
     fi
 
+    # Set SSH service name based on OS
+    if [[ $ID == "ubuntu" ]]; then
+        SSH_SERVICE="ssh.service"
+    else
+        SSH_SERVICE="sshd.service"
+    fi
+    # Fallback: check if service exists
+    if ! systemctl list-units --full -all | grep -q "$SSH_SERVICE"; then
+        if systemctl list-units --full -all | grep -q "sshd.service"; then
+            SSH_SERVICE="sshd.service"
+        elif systemctl list-units --full -all | grep -q "ssh.service"; then
+            SSH_SERVICE="ssh.service"
+        else
+            print_error "No SSH service (ssh or sshd) found. Ensure openssh-server is installed."
+            exit 1
+        fi
+    fi
+    print_info "Detected SSH service: $SSH_SERVICE"
+    log "Detected SSH service: $SSH_SERVICE"
+
     # Enhanced internet connectivity check
     if curl -s --head https://deb.debian.org >/dev/null || curl -s --head https://archive.ubuntu.com >/dev/null; then
         print_success "Internet connectivity confirmed."
@@ -382,7 +403,7 @@ install_packages() {
         rsync wget vim \
         htop iotop nethogs ncdu tree \
         rsyslog cron jq gawk coreutils \
-        perl skopeo git openssh-client; then
+        perl skopeo git openssh-client openssh-server; then
         print_error "Failed to install essential packages."
         exit 1
     fi
@@ -457,15 +478,18 @@ setup_user() {
     print_info "Adding '$USERNAME' to sudo group..."
     if ! groups "$USERNAME" | grep -q sudo; then
         usermod -aG sudo "$USERNAME"
+        # Refresh group membership in the current session
+        su - "$USERNAME" -c "newgrp sudo" 2>/dev/null || true
         print_success "User added to sudo group."
     else
         print_info "User '$USERNAME' already in sudo group."
     fi
 
-    if sudo -u "$USERNAME" sudo -n true 2>/dev/null; then
-        print_success "Sudo access confirmed for $USERNAME."
+    if getent group sudo | grep -q "$USERNAME"; then
+        print_success "Sudo group membership confirmed for $USERNAME."
+        log "Sudo group membership confirmed for $USERNAME."
     else
-        print_warning "Could not auto-verify sudo access for $USERNAME. Please test manually."
+        print_warning "Could not verify sudo group membership for $USERNAME. Please test manually with 'sudo -l' as $USERNAME."
     fi
 
     log "User management completed for: $USERNAME."
@@ -473,6 +497,12 @@ setup_user() {
 
 configure_ssh() {
     print_section "SSH Hardening"
+
+    # Ensure openssh-server is installed
+    if ! dpkg -l openssh-server | grep -q ^ii; then
+        print_error "openssh-server package is not installed. Please ensure it is installed and try again."
+        exit 1
+    fi
 
     # Detect current SSH port
     CURRENT_SSH_PORT=$(ss -tuln | grep -E ':.*\s+0.0.0.0:\*' | grep sshd | awk '{print $5}' | cut -d':' -f2 || echo "22")
@@ -548,19 +578,19 @@ EOF
     print_info "Testing SSH configuration..."
     if sshd -t; then
         print_success "SSH configuration test passed."
-        systemctl restart sshd
-        if systemctl is-active --quiet sshd; then
+        systemctl restart "$SSH_SERVICE"
+        if systemctl is-active --quiet "$SSH_SERVICE"; then
             print_success "SSH service restarted and active."
         else
             print_error "SSH service failed to start. Reverting changes."
             cp "$SSHD_BACKUP_FILE" /etc/ssh/sshd_config
-            systemctl restart sshd
+            systemctl restart "$SSH_SERVICE"
             exit 1
         fi
     else
         print_error "SSH configuration test failed! Reverting changes."
         cp "$SSHD_BACKUP_FILE" /etc/ssh/sshd_config
-        systemctl restart sshd
+        systemctl restart "$SSH_SERVICE"
         exit 1
     fi
 
@@ -570,7 +600,7 @@ EOF
     if ! confirm "Was the new SSH connection successful?"; then
         print_error "Aborting. Restoring original SSH configuration."
         cp "$SSHD_BACKUP_FILE" /etc/ssh/sshd_config
-        systemctl restart sshd
+        systemctl restart "$SSH_SERVICE"
         exit 1
     fi
 
@@ -889,7 +919,7 @@ generate_summary() {
     fi
 
     print_info "Checking critical services..."
-    for service in sshd ufw fail2ban chrony; do
+    for service in "$SSH_SERVICE" ufw fail2ban chrony; do
         if systemctl is-active --quiet "$service"; then
             print_success "Service $service is active."
         else
@@ -903,7 +933,7 @@ generate_summary() {
             print_error "Service docker is not active."
         fi
     fi
-    systemctl is-active sshd ufw fail2ban chrony docker 2>/dev/null | tee -a "$LOG_FILE"
+    systemctl is-active "$SSH_SERVICE" ufw fail2ban chrony docker 2>/dev/null | tee -a "$LOG_FILE"
 
     echo -e "${GREEN}Server hardening script has finished successfully.${NC}"
     echo
