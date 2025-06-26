@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Debian 12 and Ubuntu Server Hardening Interactive Script
-# Version: 3 | 2025-06-26
+# Version: 3.1 | 2025-06-26
 # Compatible with: Debian 12 (Bookworm), Ubuntu 22.04 LTS, 24.04 LTS
 #
 # Description:
@@ -26,6 +26,7 @@
 # - Critical configurations are backed up before modification. Backup files are at /root/setup_harden_backup_*.
 # - When creating a new user, you can optionally add an SSH public key from your local machine.
 # - A user password is optional, as SSH key-based authentication is enforced.
+# - The user will be prompted to select a timezone during system configuration.
 # - A reboot is recommended at the end to apply all changes.
 # - Test the script in a VM before production use.
 #
@@ -156,6 +157,14 @@ validate_ssh_key() {
         return 1
     fi
     return 0
+}
+
+validate_timezone() {
+    local tz="$1"
+    if [[ -f "/usr/share/zoneinfo/$tz" || -d "/usr/share/zoneinfo/$tz" ]]; then
+        return 0
+    fi
+    return 1
 }
 
 # --- Dependency Check and Installation ---
@@ -309,13 +318,24 @@ configure_system() {
     cp /etc/fstab "$BACKUP_DIR/fstab.backup"
     cp /etc/sysctl.conf "$BACKUP_DIR/sysctl.conf.backup" 2>/dev/null || true
 
-    print_info "Setting timezone to UTC..."
-    if ! timedatectl status | grep -q "Time zone: Etc/UTC"; then
-        timedatectl set-timezone Etc/UTC
-        print_success "Timezone set to UTC."
-    else
-        print_info "Timezone already set to UTC."
-    fi
+    print_info "Configuring timezone..."
+    while true; do
+        read -rp "$(echo -e "${CYAN}Enter the desired timezone (e.g., Etc/UTC, America/New_York) [Etc/UTC]: ${NC}")" TIMEZONE
+        TIMEZONE=${TIMEZONE:-Etc/UTC}
+        if validate_timezone "$TIMEZONE"; then
+            CURRENT_TZ=$(timedatectl status | grep "Time zone" | awk '{print $3}' || echo "unknown")
+            if [[ "$CURRENT_TZ" != "$TIMEZONE" ]]; then
+                timedatectl set-timezone "$TIMEZONE"
+                print_success "Timezone set to $TIMEZONE."
+                log "Timezone set to $TIMEZONE."
+            else
+                print_info "Timezone already set to $TIMEZONE."
+            fi
+            break
+        else
+            print_error "Invalid timezone. Please use a valid timezone (e.g., Etc/UTC, America/New_York)."
+        fi
+    done
 
     if confirm "Configure system locales interactively?"; then
         dpkg-reconfigure locales
@@ -517,6 +537,7 @@ EOF
         tee /etc/issue.net > /dev/null <<'EOF'
 ******************************************************************************
                         AUTHORIZED ACCESS ONLY
+                  all attempts are logged and reviewed.
 ******************************************************************************
 EOF
     else
