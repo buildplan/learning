@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Debian 12 and Ubuntu Server Hardening Interactive Script
-# Version: 3.7 | 2025-06-26
+# Version: 3.8 | 2025-06-26
 # Compatible with: Debian 12 (Bookworm), Ubuntu 20.04 LTS, 22.04 LTS, 24.04 LTS
 #
 # Description:
@@ -27,7 +27,7 @@
 # - Critical configurations are backed up before modification. Backup files are at /root/setup_harden_backup_*.
 # - A new admin user is created with a mandatory password or SSH key for authentication.
 # - Root SSH login is disabled; all access is via the new user with sudo privileges.
-# - The user will be prompted to select a timezone and swap size during configuration.
+# - The user will be prompted to select a timezone, swap size, and custom firewall ports.
 # - A reboot is recommended at the end to apply all changes.
 # - Test the script in a VM before production use.
 #
@@ -79,7 +79,7 @@ print_header() {
     echo -e "${CYAN}╔═════════════════════════════════════════════════════════════════╗${NC}"
     echo -e "${CYAN}║                                                                 ║${NC}"
     echo -e "${CYAN}║         DEBIAN/UBUNTU SERVER SETUP AND HARDENING SCRIPT         ║${NC}"
-    echo -e "${CYAN}║                       v3.7 | 2025-06-26                         ║${NC}"
+    echo -e "${CYAN}║                       v3.8 | 2025-06-26                         ║${NC}"
     echo -e "${CYAN}╚═════════════════════════════════════════════════════════════════╝${NC}"
     echo
 }
@@ -170,6 +170,12 @@ validate_timezone() {
 validate_swap_size() {
     local size="$1"
     [[ "$size" =~ ^[0-9]+[MG]$ ]] && [[ "${size%[MG]}" -ge 1 ]]
+}
+
+validate_ufw_port() {
+    local port="$1"
+    # Matches port (e.g., 8080) or port/protocol (e.g., 8080/tcp, 123/udp)
+    [[ "$port" =~ ^[0-9]+(/tcp|/udp)?$ ]]
 }
 
 convert_to_bytes() {
@@ -682,6 +688,37 @@ configure_firewall() {
             print_info "HTTPS rule already exists."
         fi
     fi
+    if confirm "Add additional custom ports (e.g., 8080/tcp, 123/udp)?"; then
+        while true; do
+            read -rp "$(echo -e "${CYAN}Enter ports (space-separated, e.g., 8080/tcp 123/udp): ${NC}")" CUSTOM_PORTS
+            if [[ -z "$CUSTOM_PORTS" ]]; then
+                print_info "No custom ports entered. Skipping."
+                break
+            fi
+            valid=true
+            for port in $CUSTOM_PORTS; do
+                if ! validate_ufw_port "$port"; then
+                    print_error "Invalid port format: $port. Use <port>[/tcp|/udp]."
+                    valid=false
+                    break
+                fi
+            done
+            if [[ "$valid" == true ]]; then
+                for port in $CUSTOM_PORTS; do
+                    if ufw status | grep -qw "$port"; then
+                        print_info "Rule for $port already exists."
+                    else
+                        ufw allow "$port" comment "Custom port $port"
+                        print_success "Added rule for $port."
+                        log "Added UFW rule for $port."
+                    fi
+                done
+                break
+            else
+                print_info "Please try again."
+            fi
+        done
+    fi
     print_info "Enabling firewall..."
     if ! ufw --force enable; then
         print_error "Failed to enable UFW. Check 'journalctl -u ufw' for details."
@@ -693,12 +730,28 @@ configure_firewall() {
         print_error "UFW failed to activate. Check 'journalctl -u ufw' for details."
         exit 1
     fi
+    print_warning "ACTION REQUIRED: Check your VPS provider's edge firewall to allow opened ports (e.g., $SSH_PORT/tcp)."
+    print_info " - DigitalOcean: Configure Firewall in Control Panel -> Networking -> Firewalls."
+    print_info " - AWS: Update Security Groups in EC2 Dashboard."
+    print_info " - GCP: Update Firewall Rules in VPC Network -> Firewall."
+    print_info " - Oracle: Configure Security Lists in Virtual Cloud Network."
     ufw status verbose | tee -a "$LOG_FILE"
+    iptables -L >> "$LOG_FILE" 2>&1
     log "Firewall configuration completed."
 }
 
 configure_fail2ban() {
     print_section "Fail2Ban Configuration"
+    # Collect all SSH ports (main SSH_PORT and any custom ports that are SSH-related)
+    SSH_PORTS="$SSH_PORT"
+    if [[ -n "${CUSTOM_PORTS:-}" ]]; then
+        for port in $CUSTOM_PORTS; do
+            port_num="${port%%/*}"
+            if [[ "$port_num" != "$SSH_PORT" && "$port" =~ ^[0-9]+(/tcp)?$ ]]; then
+                SSH_PORTS="$SSH_PORTS,$port_num"
+            fi
+        done
+    fi
     NEW_FAIL2BAN_CONFIG=$(mktemp)
     tee "$NEW_FAIL2BAN_CONFIG" > /dev/null <<EOF
 [DEFAULT]
@@ -708,7 +761,7 @@ maxretry = 3
 backend = auto
 [sshd]
 enabled = true
-port = $SSH_PORT
+port = $SSH_PORTS
 logpath = %(sshd_log)s
 backend = %(sshd_backend)s
 EOF
@@ -716,8 +769,8 @@ EOF
         print_info "Fail2Ban configuration already correct. Skipping."
         rm -f "$NEW_FAIL2BAN_CONFIG"
     elif [[ -f /etc/fail2ban/jail.local ]] && grep -q "\[sshd\]" /etc/fail2ban/jail.local; then
-        print_info "Fail2Ban jail.local exists. Updating SSH port..."
-        sed -i "s/^\(port\s*=\s*\).*/\1$SSH_PORT/" /etc/fail2ban/jail.local
+        print_info "Fail2Ban jail.local exists. Updating SSH ports..."
+        sed -i "s/^\(port\s*=\s*\).*/\1$SSH_PORTS/" /etc/fail2ban/jail.local
         rm -f "$NEW_FAIL2BAN_CONFIG"
     else
         print_info "Creating Fail2Ban local jail configuration..."
@@ -729,7 +782,7 @@ EOF
     systemctl restart fail2ban
     sleep 2
     if systemctl is-active --quiet fail2ban; then
-        print_success "Fail2Ban is active and monitoring port $SSH_PORT."
+        print_success "Fail2Ban is active and monitoring port(s) $SSH_PORTS."
         fail2ban-client status sshd | tee -a "$LOG_FILE"
     else
         print_error "Fail2Ban service failed to start."
@@ -787,7 +840,7 @@ install_docker() {
     fi
     print_info "Configuring Docker daemon..."
     NEW_DOCKER_CONFIG=$(mktemp)
-    tee "$NEW_DOCKER_CONFIG" > /dev/null <<EOF
+    tee "$NEW_DOCKER_CONFIG" >¼ /dev/null <<EOF
 {
   "log-driver": "json-file",
   "log-opts": { "max-size": "10m", "max-file": "3" },
