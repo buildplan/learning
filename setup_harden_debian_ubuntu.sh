@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Debian 12 and Ubuntu Server Hardening Interactive Script
-# Version: 2.8
+# Version: 3 - 2025-06-26
 # Compatible with: Debian 12 (Bookworm), Ubuntu 20.04 LTS, 22.04 LTS, 24.04 LTS
 #
 # Description:
@@ -24,6 +24,8 @@
 # Notes:
 # - The script creates a log file in /var/log/setup_harden_debian_ubuntu_*.log.
 # - Critical configurations are backed up before modification. Backup files are at /root/setup_harden_backup_*.
+# - When creating a new user, you can optionally add an SSH public key from your local machine.
+# - A user password is optional, as SSH key-based authentication is enforced.
 # - A reboot is recommended at the end to apply all changes.
 # - Test the script in a VM before production use.
 #
@@ -50,14 +52,7 @@ VERBOSE=true
 BACKUP_DIR="/root/setup_harden_backup_$(date +%Y%m%d_%H%M%S)"
 IS_CONTAINER=false
 SSHD_BACKUP_FILE=""  # Store SSH config backup filename
-
-# Parse command-line arguments
-while [[ $# -gt 0 ]]; do
-    case $1 in
-        --quiet) VERBOSE=false; shift ;;
-        *) shift ;;
-    esac
-done
+LOCAL_KEY_ADDED=false  # Track if a local SSH key was added
 
 # Logging function
 log() {
@@ -150,6 +145,14 @@ validate_hostname() {
 validate_port() {
     local port="$1"
     if [[ ! $port =~ ^[0-9]+$ ]] || [[ $port -lt 1024 ]] || [[ $port -gt 65535 ]]; then
+        return 1
+    fi
+    return 0
+}
+
+validate_ssh_key() {
+    local key="$1"
+    if [[ -z "$key" ]] || ! echo "$key" | grep -qE '^(ssh-rsa|ecdsa|ed25519) '; then
         return 1
     fi
     return 0
@@ -376,11 +379,55 @@ setup_user() {
             print_error "Failed to create user '$USERNAME'."
             exit 1
         fi
-        print_info "Please set a password for the new user."
-        if ! passwd "$USERNAME"; then
-            print_error "Failed to set password for '$USERNAME'."
-            exit 1
+
+        print_info "Setting a password for the new user (optional)..."
+        while true; do
+            if passwd "$USERNAME"; then
+                print_success "Password set for '$USERNAME'."
+                break
+            else
+                print_error "Passwords did not match or another error occurred."
+                if ! confirm "Try setting the password again?"; then
+                    print_info "Skipping password setting for '$USERNAME'."
+                    break
+                fi
+            fi
+        done
+
+        USER_HOME=$(getent passwd "$USERNAME" | cut -d: -f6)
+        SSH_DIR="$USER_HOME/.ssh"
+        AUTH_KEYS="$SSH_DIR/authorized_keys"
+
+        if confirm "Would you like to add an SSH public key from your local machine?"; then
+            while true; do
+                read -rp "$(echo -e "${CYAN}Paste your SSH public key (e.g., ssh-rsa ...): ${NC}")" SSH_PUBLIC_KEY
+                if validate_ssh_key "$SSH_PUBLIC_KEY"; then
+                    mkdir -p "$SSH_DIR"
+                    chmod 700 "$SSH_DIR"
+                    chown "$USERNAME:$USERNAME" "$SSH_DIR"
+                    if ! grep -Fx "$SSH_PUBLIC_KEY" "$AUTH_KEYS" >/dev/null 2>&1; then
+                        echo "$SSH_PUBLIC_KEY" >> "$AUTH_KEYS"
+                        chmod 600 "$AUTH_KEYS"
+                        chown "$USERNAME:$USERNAME" "$AUTH_KEYS"
+                        print_success "Local machine SSH public key added to authorized_keys."
+                        log "Added local SSH public key for '$USERNAME'."
+                        LOCAL_KEY_ADDED=true
+                    else
+                        print_info "SSH public key already exists in authorized_keys."
+                    fi
+                    break
+                else
+                    print_error "Invalid SSH public key format. It should start with 'ssh-rsa', 'ecdsa', or 'ed25519'."
+                    if ! confirm "Try entering the SSH public key again?"; then
+                        print_info "Skipping SSH public key addition."
+                        break
+                    fi
+                fi
+            done
+        else
+            print_info "Skipping local SSH public key addition."
         fi
+
         print_success "User created: $USERNAME"
     else
         print_info "Using existing user: $USERNAME"
@@ -409,27 +456,32 @@ configure_ssh() {
     # Detect current SSH port
     CURRENT_SSH_PORT=$(ss -tuln | grep -E ':.*\s+0.0.0.0:\*' | grep sshd | awk '{print $5}' | cut -d':' -f2 || echo "22")
 
-    # Generate SSH key for the user if none exists
+    # Generate SSH key for the user if none exists and no local key was added
     print_info "Checking SSH key for user '$USERNAME'..."
     USER_HOME=$(getent passwd "$USERNAME" | cut -d: -f6)
     SSH_DIR="$USER_HOME/.ssh"
     SSH_KEY="$SSH_DIR/id_ed25519"
+    AUTH_KEYS="$SSH_DIR/authorized_keys"
 
-    if [[ ! -f "$SSH_KEY" ]]; then
+    if [[ $LOCAL_KEY_ADDED == false && ! -f "$SSH_KEY" ]]; then
         print_info "Generating new SSH key (ed25519) for '$USERNAME'..."
         mkdir -p "$SSH_DIR"
         chmod 700 "$SSH_DIR"
         chown "$USERNAME:$USERNAME" "$SSH_DIR"
         sudo -u "$USERNAME" ssh-keygen -t ed25519 -f "$SSH_KEY" -N "" -q
-        cat "$SSH_KEY.pub" >> "$SSH_DIR/authorized_keys"
-        chmod 600 "$SSH_DIR/authorized_keys"
-        chown "$USERNAME:$USERNAME" "$SSH_DIR/authorized_keys"
+        cat "$SSH_KEY.pub" >> "$AUTH_KEYS"
+        chmod 600 "$AUTH_KEYS"
+        chown "$USERNAME:$USERNAME" "$AUTH_KEYS"
         print_success "SSH key generated and added to authorized_keys."
         echo -e "${YELLOW}Public key for remote access:${NC}"
         cat "$SSH_KEY.pub" | tee -a "$LOG_FILE"
         echo -e "${YELLOW}Copy this key to your local ~/.ssh/authorized_keys or use 'ssh-copy-id -p $CURRENT_SSH_PORT $USERNAME@$SERVER_IP' from your local machine.${NC}"
     else
-        print_info "SSH key already exists for '$USERNAME'. Skipping key generation."
+        if [[ $LOCAL_KEY_ADDED == true ]]; then
+            print_info "Local SSH public key already added for '$USERNAME'. Skipping key generation."
+        else
+            print_info "SSH key already exists for '$USERNAME'. Skipping key generation."
+        fi
     fi
 
     print_warning "SSH Key Setup Required!"
