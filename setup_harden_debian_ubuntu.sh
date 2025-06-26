@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # Debian 12 and Ubuntu Server Hardening Interactive Script
-# Version: 3 - 2025-06-26
-# Compatible with: Debian 12 (Bookworm), Ubuntu 20.04 LTS, 22.04 LTS, 24.04 LTS
+# Version: 3 | 2025-06-26
+# Compatible with: Debian 12 (Bookworm), Ubuntu 22.04 LTS, 24.04 LTS
 #
 # Description:
 # This script provisions and hardens a fresh Debian 12 or Ubuntu server with essential security
@@ -152,7 +152,7 @@ validate_port() {
 
 validate_ssh_key() {
     local key="$1"
-    if [[ -z "$key" ]] || ! echo "$key" | grep -qE '^(ssh-rsa|ecdsa|ed25519) '; then
+    if [[ -z "$key" ]] || ! echo "$key" | grep -qE '^(ssh-rsa|ecdsa|ssh-ed25519) '; then
         return 1
     fi
     return 0
@@ -417,7 +417,7 @@ setup_user() {
                     fi
                     break
                 else
-                    print_error "Invalid SSH public key format. It should start with 'ssh-rsa', 'ecdsa', or 'ed25519'."
+                    print_error "Invalid SSH public key format. It should start with 'ssh-rsa', 'ecdsa', or 'ssh-ed25519'."
                     if ! confirm "Try entering the SSH public key again?"; then
                         print_info "Skipping SSH public key addition."
                         break
