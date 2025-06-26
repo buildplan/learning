@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Debian 12 and Ubuntu Server Hardening Interactive Script
-# Version: 3.4 | 2025-06-26
+# Version: 3.5 | 2025-06-26
 # Compatible with: Debian 12 (Bookworm), Ubuntu 20.04 LTS, 22.04 LTS, 24.04 LTS
 #
 # Description:
@@ -79,6 +79,7 @@ print_header() {
     echo -e "${CYAN}╔═════════════════════════════════════════════════════════════════╗${NC}"
     echo -e "${CYAN}║                                                                 ║${NC}"
     echo -e "${CYAN}║         DEBIAN/UBUNTU SERVER SETUP AND HARDENING SCRIPT         ║${NC}"
+    echo -e "${CYAN}║                   Version: 3.5 | 2025-06-26                     ║${NC}"
     echo -e "${CYAN}║                                                                 ║${NC}"
     echo -e "${CYAN}╚═════════════════════════════════════════════════════════════════╝${NC}"
     echo
@@ -226,7 +227,7 @@ check_system() {
         elif systemctl is-enabled sshd.service >/dev/null 2>&1 || systemctl is-active sshd.service >/dev/null 2>&1; then
             print_info "Preliminary check: sshd.service detected."
         elif ps aux | grep -q "[s]shd"; then
-            print_info "Preliminary check: SSH daemon running but no standard service detected."
+            print_warning "Preliminary check: SSH daemon running but no standard service detected."
         else
             print_warning "No SSH service or daemon detected. Ensure SSH is working after package installation."
         fi
@@ -242,6 +243,19 @@ check_system() {
     if [[ ! -w /var/log ]]; then
         print_error "Failed to write to /var/log. Cannot create log file."
         exit 1
+    fi
+
+    # Check /etc/shadow permissions
+    if [[ ! -w /etc/shadow ]]; then
+        print_error "/etc/shadow is not writable. Check permissions (should be 640, root:shadow)."
+        exit 1
+    fi
+    SHADOW_PERMS=$(stat -c %a /etc/shadow)
+    if [[ "$SHADOW_PERMS" != "640" ]]; then
+        print_info "Fixing /etc/shadow permissions to 640..."
+        chmod 640 /etc/shadow
+        chown root:shadow /etc/shadow
+        log "Fixed /etc/shadow permissions to 640."
     fi
 
     log "System compatibility check completed."
@@ -318,11 +332,20 @@ setup_user() {
             exit 1
         fi
         print_info "Set a password for '$USERNAME' (optional, can be left blank for key-only access):"
-        if passwd "$USERNAME"; then
-            print_success "Password for '$USERNAME' updated."
-        else
-            print_warning "Password setting failed or was skipped."
-        fi
+        for ((i=0; i<3; i++)); do
+            if passwd "$USERNAME" 2>&1 | tee -a "$LOG_FILE"; then
+                print_success "Password for '$USERNAME' updated."
+                break
+            else
+                print_warning "Password setting failed (attempt $((i+1))/3)."
+                if [[ $i -lt 2 ]]; then
+                    print_info "Please try again."
+                else
+                    print_warning "Password setting skipped after 3 failed attempts."
+                    break
+                fi
+            fi
+        done
 
         USER_HOME=$(getent passwd "$USERNAME" | cut -d: -f6)
         SSH_DIR="$USER_HOME/.ssh"
@@ -437,8 +460,17 @@ configure_ssh() {
     elif systemctl is-enabled sshd.service >/dev/null 2>&1 || systemctl is-active sshd.service >/dev/null 2>&1; then
         SSH_SERVICE="sshd.service"
     elif ps aux | grep -q "[s]shd"; then
-        print_warning "SSH daemon running but no standard service detected. Assuming ssh.service."
+        print_warning "SSH daemon running but no standard service detected. Attempting to enable ssh.service..."
         SSH_SERVICE="ssh.service"
+        if ! systemctl enable "$SSH_SERVICE" >/dev/null 2>&1; then
+            print_error "Failed to enable ssh.service. Please check openssh-server installation."
+            echo -e "${CYAN}Run these commands to diagnose:${NC}" | tee -a "$LOG_FILE"
+            echo -e "${CYAN}  - systemctl status ssh${NC}" | tee -a "$LOG_FILE"
+            echo -e "${CYAN}  - systemctl status sshd${NC}" | tee -a "$LOG_FILE"
+            echo -e "${CYAN}  - ps aux | grep sshd${NC}" | tee -a "$LOG_FILE"
+            echo -e "${CYAN}  - dpkg -l openssh-server${NC}" | tee -a "$LOG_FILE"
+            exit 1
+        fi
     else
         print_error "No SSH service or daemon detected. Please verify openssh-server installation and SSH daemon status."
         echo -e "${CYAN}Run these commands to diagnose:${NC}" | tee -a "$LOG_FILE"
@@ -455,7 +487,10 @@ configure_ssh() {
 
     # Ensure SSH service is enabled
     if ! systemctl is-enabled "$SSH_SERVICE" >/dev/null 2>&1; then
-        systemctl enable "$SSH_SERVICE"
+        if ! systemctl enable "$SSH_SERVICE" >/dev/null 2>&1; then
+            print_error "Failed to enable $SSH_SERVICE. Please check service status."
+            exit 1
+        fi
         print_success "SSH service enabled: $SSH_SERVICE"
     fi
 
@@ -523,19 +558,24 @@ EOF
 
     print_info "Testing and restarting SSH service..."
     if sshd -t; then
-        systemctl restart "$SSH_SERVICE"
+        if ! systemctl restart "$SSH_SERVICE"; then
+            print_error "SSH service failed to restart! Reverting changes..."
+            cp "$SSHD_BACKUP_FILE" /etc/ssh/sshd_config
+            systemctl restart "$SSH_SERVICE" || true
+            exit 1
+        fi
         if systemctl is-active --quiet "$SSH_SERVICE"; then
             print_success "SSH service restarted on port $SSH_PORT."
         else
             print_error "SSH service failed to start! Reverting changes..."
             cp "$SSHD_BACKUP_FILE" /etc/ssh/sshd_config
-            systemctl restart "$SSH_SERVICE"
+            systemctl restart "$SSH_SERVICE" || true
             exit 1
         fi
     else
         print_error "SSH config test failed! Reverting changes..."
         cp "$SSHD_BACKUP_FILE" /etc/ssh/sshd_config
-        systemctl restart "$SSH_SERVICE"
+        systemctl restart "$SSH_SERVICE" || true
         rm -f "$NEW_SSH_CONFIG"
         exit 1
     fi
@@ -546,7 +586,7 @@ EOF
     if ! confirm "Was the new SSH connection successful?"; then
         print_error "Aborting. Restoring original SSH configuration."
         cp "$SSHD_BACKUP_FILE" /etc/ssh/sshd_config
-        systemctl restart "$SSH_SERVICE"
+        systemctl restart "$SSH_SERVICE" || true
         exit 1
     fi
     log "SSH hardening completed."
@@ -841,7 +881,7 @@ generate_summary() {
     echo -e "  Server IP:   $SERVER_IP"
     echo
     echo -e "${PURPLE}Log File: ${LOG_FILE}${NC}"
-    echo -e "${PURPLE}Backups:  ${BACKUP_DIR}${NC}"
+    echo -e "${PURPLE}Backups: ${BACKUP_DIR}${NC}"
     echo
     echo -e "${CYAN}Post-Reboot Verification Steps:${NC}"
     echo -e "  - SSH access:       ssh -p $SSH_PORT $USERNAME@$SERVER_IP"
