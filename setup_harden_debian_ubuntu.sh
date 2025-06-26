@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Debian 12 and Ubuntu Server Hardening Interactive Script
-# Version: 3.5 | 2025-06-26
+# Version: 3.6 | 2025-06-26
 # Compatible with: Debian 12 (Bookworm), Ubuntu 20.04 LTS, 22.04 LTS, 24.04 LTS
 #
 # Description:
@@ -25,9 +25,9 @@
 # Notes:
 # - The script creates a log file in /var/log/setup_harden_debian_ubuntu_*.log.
 # - Critical configurations are backed up before modification. Backup files are at /root/setup_harden_backup_*.
-# - When creating a new user, you can optionally add an SSH public key from your local machine.
-# - A user password is optional, as SSH key-based authentication is enforced.
-# - The user will be prompted to select a timezone during system configuration.
+# - A new admin user is created with a mandatory password or SSH key for authentication.
+# - Root SSH login is disabled; all access is via the new user with sudo privileges.
+# - The user will be prompted to select a timezone and swap size during configuration.
 # - A reboot is recommended at the end to apply all changes.
 # - Test the script in a VM before production use.
 #
@@ -79,8 +79,7 @@ print_header() {
     echo -e "${CYAN}╔═════════════════════════════════════════════════════════════════╗${NC}"
     echo -e "${CYAN}║                                                                 ║${NC}"
     echo -e "${CYAN}║         DEBIAN/UBUNTU SERVER SETUP AND HARDENING SCRIPT         ║${NC}"
-    echo -e "${CYAN}║                   Version: 3.5 | 2025-06-26                     ║${NC}"
-    echo -e "${CYAN}║                                                                 ║${NC}"
+    echo -e "${CYAN}║                       v3.6 | 2025-06-26                         ║${NC}"
     echo -e "${CYAN}╚═════════════════════════════════════════════════════════════════╝${NC}"
     echo
 }
@@ -166,6 +165,24 @@ validate_ssh_key() {
 validate_timezone() {
     local tz="$1"
     [[ -e "/usr/share/zoneinfo/$tz" ]]
+}
+
+validate_swap_size() {
+    local size="$1"
+    [[ "$size" =~ ^[0-9]+[MG]$ ]] && [[ "${size%[MG]}" -ge 1 ]]
+}
+
+convert_to_bytes() {
+    local size="$1"
+    local unit="${size: -1}"
+    local value="${size%[MG]}"
+    if [[ "$unit" == "G" ]]; then
+        echo $((value * 1024 * 1024 * 1024))
+    elif [[ "$unit" == "M" ]]; then
+        echo $((value * 1024 * 1024))
+    else
+        echo 0
+    fi
 }
 
 # --- CORE FUNCTIONS ---
@@ -331,19 +348,27 @@ setup_user() {
             print_error "User '$USERNAME' creation verification failed."
             exit 1
         fi
-        print_info "Set a password for '$USERNAME' (optional, can be left blank for key-only access):"
-        for ((i=0; i<3; i++)); do
-            if passwd "$USERNAME" 2>&1 | tee -a "$LOG_FILE"; then
-                print_success "Password for '$USERNAME' updated."
+        print_info "Set a password for '$USERNAME' (required, or press Enter twice to skip for key-only access):"
+        while true; do
+            read -sp "$(echo -e "${CYAN}New password: ${NC}")" PASS1
+            echo
+            read -sp "$(echo -e "${CYAN}Retype new password: ${NC}")" PASS2
+            echo
+            if [[ -z "$PASS1" && -z "$PASS2" ]]; then
+                print_warning "Password skipped. Relying on SSH key authentication."
+                log "Password setting skipped for '$USERNAME'."
                 break
-            else
-                print_warning "Password setting failed (attempt $((i+1))/3)."
-                if [[ $i -lt 2 ]]; then
-                    print_info "Please try again."
-                else
-                    print_warning "Password setting skipped after 3 failed attempts."
+            elif [[ "$PASS1" == "$PASS2" ]]; then
+                if echo "$USERNAME:$PASS1" | chpasswd 2>&1 | tee -a "$LOG_FILE"; then
+                    print_success "Password for '$USERNAME' updated."
                     break
+                else
+                    print_error "Failed to set password. Check log file for details."
+                    print_info "Try again or press Enter twice to skip."
+                    log "Failed to set password for '$USERNAME'."
                 fi
+            else
+                print_error "Passwords do not match. Please try again."
             fi
         done
 
@@ -454,22 +479,30 @@ configure_ssh() {
         exit 1
     fi
 
-    # Detect SSH service name
+    # Detect SSH service name and handle socket activation
     if [[ $ID == "ubuntu" ]] && { systemctl is-enabled ssh.service >/dev/null 2>&1 || systemctl is-active ssh.service >/dev/null 2>&1; }; then
         SSH_SERVICE="ssh.service"
     elif systemctl is-enabled sshd.service >/dev/null 2>&1 || systemctl is-active sshd.service >/dev/null 2>&1; then
         SSH_SERVICE="sshd.service"
     elif ps aux | grep -q "[s]shd"; then
-        print_warning "SSH daemon running but no standard service detected. Attempting to enable ssh.service..."
+        print_warning "SSH daemon running but no standard service detected. Checking for socket activation..."
+        if systemctl is-active ssh.socket >/dev/null 2>&1; then
+            print_info "Disabling ssh.socket to enable ssh.service..."
+            systemctl disable --now ssh.socket
+        fi
         SSH_SERVICE="ssh.service"
-        if ! systemctl enable "$SSH_SERVICE" >/dev/null 2>&1; then
-            print_error "Failed to enable ssh.service. Please check openssh-server installation."
-            echo -e "${CYAN}Run these commands to diagnose:${NC}" | tee -a "$LOG_FILE"
-            echo -e "${CYAN}  - systemctl status ssh${NC}" | tee -a "$LOG_FILE"
-            echo -e "${CYAN}  - systemctl status sshd${NC}" | tee -a "$LOG_FILE"
-            echo -e "${CYAN}  - ps aux | grep sshd${NC}" | tee -a "$LOG_FILE"
-            echo -e "${CYAN}  - dpkg -l openssh-server${NC}" | tee -a "$LOG_FILE"
-            exit 1
+        if ! systemctl enable --now "$SSH_SERVICE" >/dev/null 2>&1; then
+            print_error "Failed to enable and start $SSH_SERVICE. Attempting manual start..."
+            if ! /usr/sbin/sshd; then
+                print_error "Failed to start SSH daemon manually. Please check openssh-server installation."
+                echo -e "${CYAN}Run these commands to diagnose:${NC}" | tee -a "$LOG_FILE"
+                echo -e "${CYAN}  - systemctl status ssh${NC}" | tee -a "$LOG_FILE"
+                echo -e "${CYAN}  - systemctl status sshd${NC}" | tee -a "$LOG_FILE"
+                echo -e "${CYAN}  - ps aux | grep sshd${NC}" | tee -a "$LOG_FILE"
+                echo -e "${CYAN}  - dpkg -l openssh-server${NC}" | tee -a "$LOG_FILE"
+                exit 1
+            fi
+            print_success "SSH daemon started manually."
         fi
     else
         print_error "No SSH service or daemon detected. Please verify openssh-server installation and SSH daemon status."
@@ -485,13 +518,23 @@ configure_ssh() {
     systemctl status "$SSH_SERVICE" --no-pager >> "$LOG_FILE" 2>&1
     ps aux | grep "[s]shd" >> "$LOG_FILE" 2>&1
 
-    # Ensure SSH service is enabled
+    # Ensure SSH service is enabled and running
     if ! systemctl is-enabled "$SSH_SERVICE" >/dev/null 2>&1; then
         if ! systemctl enable "$SSH_SERVICE" >/dev/null 2>&1; then
             print_error "Failed to enable $SSH_SERVICE. Please check service status."
             exit 1
         fi
         print_success "SSH service enabled: $SSH_SERVICE"
+    fi
+    if ! systemctl is-active "$SSH_SERVICE" >/dev/null 2>&1; then
+        if ! systemctl start "$SSH_SERVICE" >/dev/null 2>&1; then
+            print_error "Failed to start $SSH_SERVICE. Attempting manual start..."
+            if ! /usr/sbin/sshd; then
+                print_error "Failed to start SSH daemon manually."
+                exit 1
+            fi
+            print_success "SSH daemon started manually."
+        fi
     fi
 
     CURRENT_SSH_PORT=$(ss -tuln | grep -E ":(22|.*$SSH_SERVICE.*)" | awk '{print $5}' | cut -d':' -f2 | head -n1 || echo "22")
@@ -561,7 +604,7 @@ EOF
         if ! systemctl restart "$SSH_SERVICE"; then
             print_error "SSH service failed to restart! Reverting changes..."
             cp "$SSHD_BACKUP_FILE" /etc/ssh/sshd_config
-            systemctl restart "$SSH_SERVICE" || true
+            systemctl restart "$SSH_SERVICE" || /usr/sbin/sshd || true
             exit 1
         fi
         if systemctl is-active --quiet "$SSH_SERVICE"; then
@@ -569,15 +612,31 @@ EOF
         else
             print_error "SSH service failed to start! Reverting changes..."
             cp "$SSHD_BACKUP_FILE" /etc/ssh/sshd_config
-            systemctl restart "$SSH_SERVICE" || true
+            systemctl restart "$SSH_SERVICE" || /usr/sbin/sshd || true
             exit 1
         fi
     else
         print_error "SSH config test failed! Reverting changes..."
         cp "$SSHD_BACKUP_FILE" /etc/ssh/sshd_config
-        systemctl restart "$SSH_SERVICE" || true
+        systemctl restart "$SSH_SERVICE" || /usr/sbin/sshd || true
         rm -f "$NEW_SSH_CONFIG"
         exit 1
+    fi
+
+    # Verify root SSH is disabled
+    print_info "Verifying root SSH login is disabled..."
+    if grep -q "^PermitRootLogin no" /etc/ssh/sshd_config.d/99-hardening.conf; then
+        print_success "Root SSH login is disabled."
+    else
+        print_error "Failed to disable root SSH login. Please check /etc/ssh/sshd_config.d/99-hardening.conf."
+        exit 1
+    fi
+    # Test root SSH access
+    if ssh -p "$SSH_PORT" -o BatchMode=yes -o ConnectTimeout=5 root@localhost true 2>/dev/null; then
+        print_error "Root SSH login is still possible! Please check SSH configuration."
+        exit 1
+    else
+        print_success "Confirmed: Root SSH login is disabled."
     fi
 
     print_warning "CRITICAL: Test new SSH connection in a SEPARATE terminal NOW!"
@@ -586,7 +645,7 @@ EOF
     if ! confirm "Was the new SSH connection successful?"; then
         print_error "Aborting. Restoring original SSH configuration."
         cp "$SSHD_BACKUP_FILE" /etc/ssh/sshd_config
-        systemctl restart "$SSH_SERVICE" || true
+        systemctl restart "$SSH_SERVICE" || /usr/sbin/sshd || true
         exit 1
     fi
     log "SSH hardening completed."
@@ -782,27 +841,69 @@ configure_swap() {
         return 0
     fi
     print_section "Swap Configuration"
-    if swapon --show | grep -q '/swapfile'; then
-        print_info "Swap file already exists."
-        return 0
-    fi
-    if ! confirm "Configure a 2GB swap file (Recommended for < 4GB RAM)?"; then
-        print_info "Skipping swap configuration."
-        return 0
-    fi
-    REQUIRED_SPACE=$((2 * 1024 * 1024))
-    AVAILABLE_SPACE=$(df -k / | tail -n 1 | awk '{print $4}')
-    if (( AVAILABLE_SPACE < REQUIRED_SPACE )); then
-        print_error "Insufficient disk space for 2GB swap file. Available: $((AVAILABLE_SPACE / 1024))MB"
-        exit 1
-    fi
-    print_info "Creating 2GB swap file..."
-    if ! fallocate -l 2G /swapfile || ! chmod 600 /swapfile || ! mkswap /swapfile || ! swapon /swapfile; then
-        print_error "Failed to create or enable swap file."
-        exit 1
-    fi
-    if ! grep -q '^/swapfile ' /etc/fstab; then
-        echo '/swapfile none swap sw 0 0' >> /etc/fstab
+    local existing_swap
+    existing_swap=$(swapon --show --noheadings | awk '{print $1}' || true)
+    if [[ -n "$existing_swap" ]]; then
+        local current_size
+        current_size=$(ls -lh "$existing_swap" | awk '{print $5}')
+        print_info "Existing swap file found: $existing_swap ($current_size)"
+        if confirm "Modify existing swap file size?"; then
+            while true; do
+                read -rp "$(echo -e "${CYAN}Enter new swap size (e.g., 2G, 512M) [current: $current_size]: ${NC}")" SWAP_SIZE
+                SWAP_SIZE=${SWAP_SIZE:-$current_size}
+                if validate_swap_size "$SWAP_SIZE"; then
+                    break
+                else
+                    print_error "Invalid size. Use format like '2G' or '512M'."
+                fi
+            done
+            REQUIRED_SPACE=$(convert_to_bytes "$SWAP_SIZE")
+            AVAILABLE_SPACE=$(df -k / | tail -n 1 | awk '{print $4}')
+            if (( AVAILABLE_SPACE < REQUIRED_SPACE / 1024 )); then
+                print_error "Insufficient disk space for $SWAP_SIZE swap file. Available: $((AVAILABLE_SPACE / 1024))MB"
+                exit 1
+            fi
+            print_info "Disabling existing swap file..."
+            swapoff "$existing_swap" || { print_error "Failed to disable swap file."; exit 1; }
+            print_info "Resizing swap file to $SWAP_SIZE..."
+            if ! fallocate -l "$SWAP_SIZE" "$existing_swap" || ! chmod 600 "$existing_swap" || ! mkswap "$existing_swap" || ! swapon "$existing_swap"; then
+                print_error "Failed to resize or enable swap file."
+                exit 1
+            fi
+            print_success "Swap file resized to $SWAP_SIZE."
+        else
+            print_info "Keeping existing swap file."
+            return 0
+        fi
+    else
+        if ! confirm "Configure a swap file (recommended for < 4GB RAM)?"; then
+            print_info "Skipping swap configuration."
+            return 0
+        fi
+        while true; do
+            read -rp "$(echo -e "${CYAN}Enter swap file size (e.g., 2G, 512M) [2G]: ${NC}")" SWAP_SIZE
+            SWAP_SIZE=${SWAP_SIZE:-2G}
+            if validate_swap_size "$SWAP_SIZE"; then
+                break
+            else
+                print_error "Invalid size. Use format like '2G' or '512M'."
+            fi
+        done
+        REQUIRED_SPACE=$(convert_to_bytes "$SWAP_SIZE")
+        AVAILABLE_SPACE=$(df -k / | tail -n 1 | awk '{print $4}')
+        if (( AVAILABLE_SPACE < REQUIRED_SPACE / 1024 )); then
+            print_error "Insufficient disk space for $SWAP_SIZE swap file. Available: $((AVAILABLE_SPACE / 1024))MB"
+            exit 1
+        fi
+        print_info "Creating $SWAP_SIZE swap file..."
+        if ! fallocate -l "$SWAP_SIZE" /swapfile || ! chmod 600 /swapfile || ! mkswap /swapfile || ! swapon /swapfile; then
+            print_error "Failed to create or enable swap file."
+            exit 1
+        fi
+        if ! grep -q '^/swapfile ' /etc/fstab; then
+            echo '/swapfile none swap sw 0 0' >> /etc/fstab
+        fi
+        print_success "Swap file created: $SWAP_SIZE"
     fi
     print_info "Optimizing swap settings..."
     NEW_SWAP_CONFIG=$(mktemp)
