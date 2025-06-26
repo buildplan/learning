@@ -537,7 +537,7 @@ EOF
         tee /etc/issue.net > /dev/null <<'EOF'
 ******************************************************************************
                         AUTHORIZED ACCESS ONLY
-                  all attempts are logged and reviewed.
+                 all attempts are logged and reviewed.
 ******************************************************************************
 EOF
     else
