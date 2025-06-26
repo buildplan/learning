@@ -2,7 +2,7 @@
 
 # Debian 12 and Ubuntu Server Hardening Interactive Script
 # Version: 3.1 | 2025-06-26
-# Compatible with: Debian 12 (Bookworm), Ubuntu 22.04 LTS, 24.04 LTS
+# Compatible with: Debian 12 (Bookworm), Ubuntu 20.04 LTS, 22.04 LTS, 24.04 LTS
 #
 # Description:
 # This script provisions and hardens a fresh Debian 12 or Ubuntu server with essential security
