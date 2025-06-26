@@ -1416,4 +1416,4 @@ main() {
 }
 
 # --- EXECUTION ---
-main
+main "$@"
