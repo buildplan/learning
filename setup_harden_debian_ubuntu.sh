@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Debian 12 and Ubuntu Server Hardening Interactive Script
-# Version: 3.6 | 2025-06-26
+# Version: 3.7 | 2025-06-26
 # Compatible with: Debian 12 (Bookworm), Ubuntu 20.04 LTS, 22.04 LTS, 24.04 LTS
 #
 # Description:
@@ -79,7 +79,7 @@ print_header() {
     echo -e "${CYAN}╔═════════════════════════════════════════════════════════════════╗${NC}"
     echo -e "${CYAN}║                                                                 ║${NC}"
     echo -e "${CYAN}║         DEBIAN/UBUNTU SERVER SETUP AND HARDENING SCRIPT         ║${NC}"
-    echo -e "${CYAN}║                       v3.6 | 2025-06-26                         ║${NC}"
+    echo -e "${CYAN}║                       v3.7 | 2025-06-26                         ║${NC}"
     echo -e "${CYAN}╚═════════════════════════════════════════════════════════════════╝${NC}"
     echo
 }
@@ -95,13 +95,13 @@ print_success() {
     echo -e "${GREEN}✓ $1${NC}" | tee -a "$LOG_FILE"
 }
 
+print_error() {
+    echo -e "${RED}✗ $1${NC}" | tee -a "$LOG_FILE"
+}
+
 print_warning() {
     [[ $VERBOSE == false ]] && return
     echo -e "${YELLOW}⚠ $1${NC}" | tee -a "$LOG_FILE"
-}
-
-print_error() {
-    echo -e "${RED}✗ $1${NC}" | tee -a "$LOG_FILE"
 }
 
 print_info() {
@@ -683,8 +683,16 @@ configure_firewall() {
         fi
     fi
     print_info "Enabling firewall..."
-    ufw --force enable
-    print_success "Firewall is active."
+    if ! ufw --force enable; then
+        print_error "Failed to enable UFW. Check 'journalctl -u ufw' for details."
+        exit 1
+    fi
+    if ufw status | grep -q "Status: active"; then
+        print_success "Firewall is active."
+    else
+        print_error "UFW failed to activate. Check 'journalctl -u ufw' for details."
+        exit 1
+    fi
     ufw status verbose | tee -a "$LOG_FILE"
     log "Firewall configuration completed."
 }
@@ -959,13 +967,18 @@ final_cleanup() {
 generate_summary() {
     print_section "Setup Complete!"
     print_info "Checking critical services..."
-    for service in "$SSH_SERVICE" ufw fail2ban chrony; do
+    for service in "$SSH_SERVICE" fail2ban chrony; do
         if systemctl is-active --quiet "$service"; then
             print_success "Service $service is active."
         else
             print_error "Service $service is NOT active."
         fi
     done
+    if ufw status | grep -q "Status: active"; then
+        print_success "Service ufw is active."
+    else
+        print_error "Service ufw is NOT active."
+    fi
     if command -v docker >/dev/null 2>&1; then
         if systemctl is-active --quiet docker; then
             print_success "Service docker is active."
