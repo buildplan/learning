@@ -16,6 +16,7 @@ $nodejs\
 $rust\
 $golang\
 $php\
+$custom.yaml\
 $cmd_duration\
 $jobs\
 [](fg:#212736 bg:#1d2230)\
@@ -67,7 +68,6 @@ style = "bg:#394260"
 format = '[[($all_status$ahead_behind )](fg:#769ff0 bg:#394260)]($style)'
 
 # --- Developer Context (Docker & Kubernetes) ---
-# This block uses a distinct blue background and will only show when a context is active.
 [docker_context]
 symbol = " "
 style = "fg:#ffffff bg:#326ce5"
@@ -80,7 +80,6 @@ format = '[[ $symbol$context( ☸ $namespace) ](fg:#ffffff bg:#326ce5)]($style)'
 disabled = false
 
 # --- Language & Command Context ---
-# This block shows language versions, command duration, and background job status.
 [nodejs]
 symbol = ""
 style = "bg:#212736"
@@ -101,8 +100,15 @@ symbol = ""
 style = "bg:#212736"
 format = '[[ $symbol ($version) ](fg:#769ff0 bg:#212736)]($style)'
 
+[custom.yaml]
+description = "YAML file indicator"
+detect_files = ["*.yml", "*.yaml"]
+symbol = " "
+style = "bg:#212736"
+format = '[[ $symbol](fg:#769ff0 bg:#212736)]($style)'
+
 [cmd_duration]
-min_time = 2000  # Only show if command takes longer than 2 seconds
+min_time = 2000
 style = "bg:#212736"
 format = '[[ 󰔟 $duration ](fg:#769ff0 bg:#212736)]($style)'
 
@@ -113,7 +119,6 @@ number_threshold = 1
 format = '[[ $symbol$number ](fg:#769ff0 bg:#212736)]($style)'
 
 # --- System Status (Battery & Time) ---
-# This block shows laptop battery and the current time.
 [battery]
 full_symbol = ""
 charging_symbol = "󰂄"
@@ -121,24 +126,22 @@ discharging_symbol = ""
 unknown_symbol = "?"
 empty_symbol = ""
 disabled = false
-# Color-coded display based on charge level
 [[battery.display]]
 threshold = 20
-style = "fg:#f14c4c" # Red
+style = "fg:#f14c4c"
 [[battery.display]]
 threshold = 50
-style = "fg:#f5a70a" # Yellow
+style = "fg:#f5a70a"
 [[battery.display]]
-style = "fg:#a0a9cb" # Default light blue/lavender
+style = "fg:#a0a9cb"
 
 [time]
 disabled = false
 time_format = "%I:%M %p"
 style = "bg:#1d2230"
-format = '[[ $time ](fg:#a0a9cb bg:#1d2230)]($style)' # Icon removed to allow battery symbol to lead
+format = '[[ $time ](fg:#a0a9cb bg:#1d2230)]($style)'
 
 # --- Prompt Character ---
-# Displays a different symbol for success and failure.
 [character]
 success_symbol = "[❯](fg:#a3aed2)"
 error_symbol = "[✗](fg:#e06c75)"
