@@ -16,7 +16,7 @@ $nodejs\
 $rust\
 $golang\
 $php\
-$custom.yaml\
+$custom_yaml\
 $cmd_duration\
 $jobs\
 [](fg:#212736 bg:#1d2230)\
@@ -100,12 +100,13 @@ symbol = ""
 style = "bg:#212736"
 format = '[[ $symbol ($version) ](fg:#769ff0 bg:#212736)]($style)'
 
-[custom.yaml]
+[custom_yaml]
 description = "YAML file indicator"
 detect_files = ["*.yml", "*.yaml"]
 symbol = " "
 style = "bg:#212736"
 format = '[[ $symbol](fg:#769ff0 bg:#212736)]($style)'
+when = '[[ "$PWD" != "$HOME" ]]'
 
 [cmd_duration]
 min_time = 2000
