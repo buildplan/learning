@@ -106,7 +106,7 @@ time_format = "%H:%M"
 style = "bg:#1d2230"
 format = '[[  $time ](fg:#a0a9cb bg:#1d2230)]($style)'
 
-# --- SEGMENT 7: BATTERY ---
+# --- SEGMENT 7: BATTERY (Corrected) ---
 [battery]
 full_symbol = " "
 charging_symbol = "󰂄 "
@@ -115,15 +115,17 @@ unknown_symbol = "? "
 empty_symbol = " "
 disabled = false
 format = "[$symbol$percentage]($style) "
-style = "bg:#2E3440"
+
 [[battery.display]]
 threshold = 20
-style = "fg:#f14c4c"
+style = "bg:#2E3440 fg:#f14c4c"
+
 [[battery.display]]
 threshold = 50
-style = "fg:#f5a70a"
+style = "bg:#2E3440 fg:#f5a70a"
+
 [[battery.display]]
-style = "fg:#a0a9cb"
+style = "bg:#2E3440 fg:#a0a9cb"
 
 # --- FINAL PROMPT CHARACTER ---
 [character]
