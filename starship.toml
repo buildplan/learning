@@ -106,7 +106,7 @@ time_format = "%H:%M"
 style = "bg:#1d2230"
 format = '[[  $time ](fg:#a0a9cb bg:#1d2230)]($style)'
 
-# --- SEGMENT 7: BATTERY (Corrected) ---
+# --- SEGMENT 7: BATTERY ---
 [battery]
 full_symbol = " "
 charging_symbol = "󰂄 "
