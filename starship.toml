@@ -1,4 +1,4 @@
-# --- PROMPT FORMAT ---
+# --- Main Prompt Structure (Revised) ---
 format = """
 [░▒▓](#a3aed2)\
 [ $os ](bg:#a3aed2 fg:#090c0c)\
@@ -7,11 +7,14 @@ $directory\
 [](fg:#769ff0 bg:#394260)\
 $git_branch\
 $git_status\
-[](fg:#394260 bg:#212736)\
+[](fg:#394260 bg:#326ce5)\
+$docker_context\
+[](fg:#326ce5 bg:#212736)\
 $nodejs\
 $rust\
 $golang\
 $php\
+$jobs\
 [](fg:#212736 bg:#3B4252)\
 $cmd_duration\
 [](fg:#3B4252 bg:#2E3440)\
@@ -26,7 +29,6 @@ $time\
 style = "bg:#a3aed2 fg:#090c0c"
 format = '[$symbol ]($style)'
 disabled = false
-
 [os.symbols]
 Alpine = ""
 Arch = ""
@@ -49,7 +51,6 @@ style = "fg:#e3e5e5 bg:#769ff0"
 format = "[ $path ]($style)"
 truncation_length = 3
 truncation_symbol = "…/"
-
 [directory.substitutions]
 "Documents" = "󰈙 "
 "Downloads" = " "
@@ -76,7 +77,13 @@ staged = '[staged:](green)+$count'
 renamed = "renamed:»$count"
 deleted = "deleted:!$count"
 
-# --- SEGMENT 4: LANGUAGE TOOLS ---
+# --- SEGMENT 4: DEVELOPER CONTEXT (DOCKER) ---
+[docker_context]
+symbol = " "
+style = "fg:#ffffff bg:#326ce5"
+format = '[[ $symbol$context ](fg:#ffffff bg:#326ce5)]($style)'
+
+# --- SEGMENT 5: LANGUAGE TOOLS & JOBS ---
 [package.style]
 style = "bg:#212736"
 format = '[[ $symbol ($version) ](fg:#769ff0 bg:#212736)]($style)'
@@ -93,18 +100,17 @@ symbol = ""
 [php]
 symbol = ""
 
-# --- SEGMENT 5: COMMAND DURATION ---
+[jobs]
+symbol = ""
+style = "bg:#212736"
+number_threshold = 1
+format = '[[ $symbol$number ](fg:#769ff0 bg:#212736)]($style)'
+
+# --- SEGMENT 6: COMMAND DURATION ---
 [cmd_duration]
 min_time = 1000
 style = "bg:#3B4252"
 format = "[[󰔟 $duration](fg:#a0a9cb bg:#3B4252)]($style)"
-
-# --- SEGMENT 6: TIME ---
-[time]
-disabled = false
-time_format = "%H:%M"
-style = "bg:#1d2230"
-format = '[[  $time ](fg:#a0a9cb bg:#1d2230)]($style)'
 
 # --- SEGMENT 7: BATTERY ---
 [battery]
@@ -115,19 +121,23 @@ unknown_symbol = "? "
 empty_symbol = " "
 disabled = false
 format = "[$symbol$percentage]($style) "
-
 [[battery.display]]
 threshold = 20
 style = "bg:#2E3440 fg:#f14c4c"
-
 [[battery.display]]
 threshold = 50
 style = "bg:#2E3440 fg:#f5a70a"
-
 [[battery.display]]
 style = "bg:#2E3440 fg:#a0a9cb"
+
+# --- SEGMENT 8: TIME ---
+[time]
+disabled = false
+time_format = "%H:%M"
+style = "bg:#1d2230"
+format = '[[  $time ](fg:#a0a9cb bg:#1d2230)]($style)'
 
 # --- FINAL PROMPT CHARACTER ---
 [character]
 success_symbol = "[❯](bold green)"
-error_symbol = "[❯](bold red)"
+error_symbol = "[✗](fg:#e06c75)"
