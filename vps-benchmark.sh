@@ -1,6 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+## Usage
+#
+# Run full suite with sudo fallback and IPv6 preference:
+# sudo ./vps-benchmark.sh --sudo-fallback --ipv6
+# 
+# Skip network tests and disable JSON:
+# sudo ./vps-benchmark.sh --skip-net --no-json
+
+# View help:
+# ./vps-benchmark.sh --help
+
 # Colours
 readonly RED='\033[0;31m'
 readonly GREEN='\033[0;32m'
