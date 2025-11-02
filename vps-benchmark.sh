@@ -87,7 +87,7 @@ log_debug(){ [ "$VERBOSE" = true ] && printf "${CYAN}  [DEBUG] %s${NC}\n" "$1"; 
 
 show_usage(){
   cat <<'EOF'
-VPS Benchmark Script (v2.2)
+VPS Benchmark Script
 
 USAGE:
   vps-benchmark.sh [OPTIONS]
