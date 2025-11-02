@@ -21,7 +21,7 @@ readonly NC='[0m' # No Color
 
 # Global variables
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-TEST_FILE="${SCRIPT_DIR}/pangolin_dd_testfile"
+TEST_FILE="${SCRIPT_DIR}/vps-benchmark-testfile"
 readonly SUMMARY_FILE="${SCRIPT_DIR}/benchmark_results.json"
 readonly MIN_FREE_SPACE=2  # GiB required for tests
 
