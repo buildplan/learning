@@ -3,12 +3,12 @@ set -euo pipefail
 export LC_ALL=C LANG=C # Force C locale for all output
 
 # Color output for better readability
-readonly RED='\033[0;31m'
-readonly GREEN='\033[0;32m'
-readonly YELLOW='\033[1;33m'
-readonly BLUE='\033[0;34m'
-readonly CYAN='\033[0;36m'
-readonly NC='\033[0m' # No Color
+readonly RED=$'\033[0;31m'
+readonly GREEN=$'\033[0;32m'
+readonly YELLOW=$'\033[1;33m'
+readonly BLUE=$'\033[0;34m'
+readonly CYAN=$'\033[0;36m'
+readonly NC=$'\033[0m' # No Color
 
 # Global variables
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -262,20 +262,76 @@ else
 fi
 
 # --- Final Summary ---
+BENCHMARK_END=$(date '+%Y-%m-%d %H:%M:%S')
+
+# Helper function for status indicators
+get_status_indicator() {
+  [ "$1" != "N/A" ] && echo "${GREEN}✓${NC}" || echo "${RED}✗${NC}"
+}
+json_quote() {
+  if [ "$1" = "N/A" ]; then
+    echo "null"
+  elif [[ "$1" =~ ^[0-9.]+$ ]]; then
+    echo "$1"
+  else
+    printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g' | sed 's/^/"/; s/$/"/'
+  fi
+}
+
 log_summary_header "FINAL RESULTS SUMMARY"
 
+printf "\n${BLUE}Execution Details:${NC}\n"
+printf "  %-20s: %s\n" "Hostname" "$(hostname)"
+printf "  %-20s: %s\n" "Timestamp" "$BENCHMARK_END"
+printf "  %-20s: ${GREEN}%s${NC}\n" "Status" "Completed"
+
 printf "\n${CYAN}CPU Performance (sysbench):${NC}\n"
-printf "  %-20s: ${GREEN}%s${NC} events/sec\n" "Single-Thread" "$cpu_events_single"
-printf "  %-20s: ${GREEN}%s${NC} events/sec\n" "Multi-Thread" "$cpu_events_multi"
+printf "  %-20s [$(get_status_indicator "$cpu_events_single")]: ${GREEN}%s${NC} events/sec\n" "Single-Thread" "$cpu_events_single"
+printf "  %-20s [$(get_status_indicator "$cpu_events_multi")]: ${GREEN}%s${NC} events/sec\n" "Multi-Thread" "$cpu_events_multi"
 
 printf "\n${CYAN}Disk Performance (dd 1GiB):${NC}\n"
-printf "  %-20s: ${GREEN}%s${NC} MB/s\n" "Write (Buffered)" "$disk_write_buffered_mb_s"
-printf "  %-20s: ${GREEN}%s${NC} MB/s\n" "Write (Direct)" "$disk_write_direct_mb_s"
-printf "  %-20s: ${GREEN}%s${NC} MB/s\n" "Read (Direct)" "$disk_read_mb_s"
+printf "  %-20s [$(get_status_indicator "$disk_write_buffered_mb_s")]: ${GREEN}%s${NC} MB/s\n" "Write (Buffered)" "$disk_write_buffered_mb_s"
+printf "  %-20s [$(get_status_indicator "$disk_write_direct_mb_s")]: ${GREEN}%s${NC} MB/s\n" "Write (Direct)" "$disk_write_direct_mb_s"
+printf "  %-20s [$(get_status_indicator "$disk_read_mb_s")]: ${GREEN}%s${NC} MB/s\n" "Read (Direct)" "$disk_read_mb_s"
 
 printf "\n${CYAN}Network Performance (speedtest):${NC}\n"
-printf "  %-20s: ${GREEN}%s${NC} Mbps\n" "Download" "$network_download_mbps"
-printf "  %-20s: ${GREEN}%s${NC} Mbps\n" "Upload" "$network_upload_mbps"
-printf "  %-20s: ${GREEN}%s${NC} ms\n" "Latency" "$network_ping_ms"
+printf "  %-20s [$(get_status_indicator "$network_download_mbps")]: ${GREEN}%s${NC} Mbps\n" "Download" "$network_download_mbps"
+printf "  %-20s [$(get_status_indicator "$network_upload_mbps")]: ${GREEN}%s${NC} Mbps\n" "Upload" "$network_upload_mbps"
+printf "  %-20s [$(get_status_indicator "$network_ping_ms")]: ${GREEN}%s${NC} ms\n" "Latency" "$network_ping_ms"
+
+# --- Create JSON content ---
+JSON_CONTENT=$(cat <<EOF
+{
+  "timestamp": "$(date -u '+%Y-%m-%dT%H:%M:%SZ')",
+  "hostname": "$(hostname)",
+  "cpu": {
+    "single_thread_events_per_sec": $(json_quote "$cpu_events_single"),
+    "multi_thread_events_per_sec": $(json_quote "$cpu_events_multi")
+  },
+  "disk": {
+    "write_buffered_mb_s": $(json_quote "$disk_write_buffered_mb_s"),
+    "write_direct_mb_s": $(json_quote "$disk_write_direct_mb_s"),
+    "read_mb_s": $(json_quote "$disk_read_mb_s")
+  },
+  "network": {
+    "download_mbps": $(json_quote "$network_download_mbps"),
+    "upload_mb_ps": $(json_quote "$network_upload_mbps"),
+    "ping_ms": $(json_quote "$network_ping_ms")
+  }
+}
+EOF
+)
+
+# Print the JSON to the console
+printf "\n${BLUE}JSON Format (for logging/parsing):${NC}\n"
+echo "$JSON_CONTENT"
+
+# --- Save to file if SAVE_JSON=1 ---
+# Example: sudo SAVE_JSON=1 ./vps-benchmark.sh
+if [ "${SAVE_JSON:-0}" = "1" ]; then
+  JSON_FILE="${SCRIPT_DIR}/benchmark_results_$(date '+%Y%m%d_%H%M%S').json"
+  echo "$JSON_CONTENT" > "$JSON_FILE"
+  printf "\n${BLUE}JSON results saved to: %s${NC}\n" "$JSON_FILE"
+fi
 
 printf "\n${GREEN}System benchmarking completed successfully.${NC}\n"
