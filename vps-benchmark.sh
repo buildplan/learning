@@ -15,15 +15,15 @@ readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly TEST_FILE="${SCRIPT_DIR}/a_testfile"
 INSTALL_SPEEDTEST_CLI="ookla"
 
-# --- Metric variables ---
-cpu_events_single=0
-cpu_events_multi=0
-disk_write_buffered_mb_s=0
-disk_write_direct_mb_s=0
-disk_read_mb_s=0
-network_download_mbps=0
-network_upload_mbps=0
-network_ping_ms=0
+# --- Metric variables (initialized to handle test failures) ---
+cpu_events_single="N/A"
+cpu_events_multi="N/A"
+disk_write_buffered_mb_s="N/A"
+disk_write_direct_mb_s="N/A"
+disk_read_mb_s="N/A"
+network_download_mbps="N/A"
+network_upload_mbps="N/A"
+network_ping_ms="N/A"
 
 # Error handling
 error_exit() {
@@ -80,15 +80,10 @@ install_debian_based() {
   apt-get install -y sysbench curl ca-certificates bc || error_exit "Failed to install base packages"
 
   if ! command -v speedtest &>/dev/null; then
-    if curl -sfS "https://packagecloud.io/install/repositories/ookla/speedtest-cli/script.deb.sh" | bash; then
-      if apt-get install -y speedtest; then
-        printf "${GREEN}✓${NC} Ookla Speedtest installed\n"
-      else
-        install_speedtest_python
-      fi
-    else
-      install_speedtest_python
+    if try_install_speedtest_ookla "https://packagecloud.io/install/repositories/ookla/speedtest-cli/script.deb.sh" "apt-get"; then
+      return 0
     fi
+    install_speedtest_python
   fi
 }
 
@@ -103,15 +98,10 @@ install_fedora_based() {
   fi
 
   if ! command -v speedtest &>/dev/null; then
-    if curl -sfS "https://packagecloud.io/install/repositories/ookla/speedtest-cli/script.rpm.sh" | bash; then
-      if dnf install -y speedtest; then
-        printf "${GREEN}✓${NC} Ookla Speedtest installed\n"
-      else
-        install_speedtest_python
-      fi
-    else
-      install_speedtest_python
+    if try_install_speedtest_ookla "https://packagecloud.io/install/repositories/ookla/speedtest-cli/script.rpm.sh" "dnf"; then
+      return 0
     fi
+    install_speedtest_python
   fi
 }
 
@@ -120,16 +110,24 @@ install_redhat_based() {
   yum install -y sysbench curl ca-certificates bc || error_exit "Failed to install base packages"
 
   if ! command -v speedtest &>/dev/null; then
-    if curl -sfS "https://packagecloud.io/install/repositories/ookla/speedtest-cli/script.rpm.sh" | bash; then
-      if yum install -y speedtest; then
-        printf "${GREEN}✓${NC} Ookla Speedtest installed\n"
-      else
-        install_speedtest_python
-      fi
-    else
-      install_speedtest_python
+    if try_install_speedtest_ookla "https://packagecloud.io/install/repositories/ookla/speedtest-cli/script.rpm.sh" "yum"; then
+      return 0
+    fi
+    install_speedtest_python
+  fi
+}
+
+try_install_speedtest_ookla() {
+  local script_url="$1"
+  local pkg_manager="$2"
+
+  if curl -sfS "$script_url" | bash; then
+    if $pkg_manager install -y speedtest 2>/dev/null; then
+      printf "${GREEN}✓${NC} Ookla Speedtest installed\n"
+      return 0
     fi
   fi
+  return 1
 }
 
 install_speedtest_python() {
@@ -172,11 +170,18 @@ else
   printf "${YELLOW}Warning: No speedtest tool available${NC}\n"
 fi
 
-# --- Helper function to parse dd output ---
+# --- Helper function to parse dd output (with error handling) ---
 parse_dd() {
   local dd_output="$1"
   local speed
+
   speed=$(echo "$dd_output" | grep -Eo '[0-9]+(\.[0-9]+)? [GM]B/s' | tail -n 1)
+
+  if [ -z "$speed" ]; then
+    printf "0"
+    return 1
+  fi
+
   if echo "$speed" | grep -q "GB/s"; then
     echo "$speed" | awk '{print $1 * 1024}' | cut -d'.' -f1
   else
@@ -222,17 +227,23 @@ log_section "Network Speed Test (${INSTALL_SPEEDTEST_CLI})"
 run_speedtest() {
   if command -v speedtest &>/dev/null; then
     local json_out
-    json_out=$(speedtest --accept-license --accept-gdpr -f json 2>/dev/null) || {
-      speedtest --accept-license --accept-gdpr
-      return 1
+    json_out=$(timeout 300 speedtest --accept-license --accept-gdpr -f json 2>/dev/null) || {
+      timeout 300 speedtest --accept-license --accept-gdpr || return 1
     }
-    network_download_mbps=$(echo "$json_out" | grep -o '"download":{[^}]*}' | grep -o '"bandwidth":[0-9]*' | awk -F':' '{print $2 / 125000}' | cut -d'.' -f1)
-    network_upload_mbps=$(echo "$json_out" | grep -o '"upload":{[^}]*}' | grep -o '"bandwidth":[0-9]*' | awk -F':' '{print $2 / 125000}' | cut -d'.' -f1)
-    network_ping_ms=$(echo "$json_out" | grep -o '"ping":{[^}]*}' | grep -o '"latency":[0-9.]*' | awk -F':' '{print $2}')
-    
+
+    if command -v jq &>/dev/null; then
+      network_download_mbps=$(echo "$json_out" | jq '.download.bandwidth / 125000 | floor' 2>/dev/null || echo "N/A")
+      network_upload_mbps=$(echo "$json_out" | jq '.upload.bandwidth / 125000 | floor' 2>/dev/null || echo "N/A")
+      network_ping_ms=$(echo "$json_out" | jq '.ping.latency' 2>/dev/null || echo "N/A")
+    else
+      network_download_mbps=$(echo "$json_out" | grep -o '"download":{[^}]*}' | grep -o '"bandwidth":[0-9]*' | awk -F':' '{print $2 / 125000}' | cut -d'.' -f1)
+      network_upload_mbps=$(echo "$json_out" | grep -o '"upload":{[^}]*}' | grep -o '"bandwidth":[0-9]*' | awk -F':' '{print $2 / 125000}' | cut -d'.' -f1)
+      network_ping_ms=$(echo "$json_out" | grep -o '"ping":{[^}]*}' | grep -o '"latency":[0-9.]*' | awk -F':' '{print $2}')
+    fi
+
   elif command -v speedtest-cli &>/dev/null; then
     local simple_out
-    simple_out=$(speedtest-cli --simple)
+    simple_out=$(timeout 300 speedtest-cli --simple) || return 1
     echo "$simple_out"
     network_download_mbps=$(echo "$simple_out" | awk '/Download:/ {print $2}' | cut -d'.' -f1)
     network_upload_mbps=$(echo "$simple_out" | awk '/Upload:/ {print $2}' | cut -d'.' -f1)
