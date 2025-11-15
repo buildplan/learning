@@ -1,58 +1,208 @@
 #!/usr/bin/env bash
 
-# 1. Save script to a standard location for system-wide scripts, like /usr/local/bin/.
-# Download and place the script below in /usr/local/bin/ with:
-# sudo curl -Lo /usr/local/bin/ntfy-unattended-upgrades https://raw.githubusercontent.com/buildplan/learning/refs/heads/main/ntfy-unattended-upgrades.sh
-# 2. Make the Script Executable sudo chmod +x /usr/local/bin/ntfy-unattended-upgrades
-# 3. Tell `apt` (which controls `unattended-upgrades`) to run your script using the `Post-Invoke` hook. 
-# This hook runs after `apt` operations are complete.
+# ntfy-unattended-upgrades.sh
+# Installer for ntfy-unattended-upgrades notification system
 #
-# Create a new configuration file in the `apt.conf.d` directory:
-# sudo nano /etc/apt/apt.conf.d/99-notify-on-upgrade
-# Paste the following lines into this new file:
+# Usage:
+#   sudo ./ntfy-unattended-upgrades.sh              # Normal installation
+#   sudo ./ntfy-unattended-upgrades.sh --dry-run    # Show what would be done
+#   sudo ./ntfy-unattended-upgrades.sh --uninstall  # Remove everything
 #
-# // Run script after unattended-upgrades
-# Unattended-Upgrade::Post-Invoke {
-#     // Check if the script exists and is executable, then run it.
-#     "if [ -x /usr/local/bin/ntfy-unattended-upgrades ]; then /usr/local/bin/ntfy-unattended-upgrades || true; fi";
-# };
-#
+# This script will:
+#   1. Install the notification script to /usr/local/bin/
+#   2. Create a secure config file at /etc/ntfy-upgrades.conf
+#   3. Configure an APT hook to trigger notifications
+#   4. Run a test notification
+
+set -euo pipefail
+IFS=$'\n\t'
+
+# --- Script Paths ---
+SCRIPT_PATH="/usr/local/bin/ntfy-unattended-upgrades"
+CONFIG_PATH="/etc/ntfy-upgrades.conf"
+HOOK_PATH="/etc/apt/apt.conf.d/99-notify-on-upgrade"
+LOG_FILE="/var/log/unattended-upgrades/unattended-upgrades.log"
+
+# --- Variables ---
+DRY_RUN=false
+
+# --- Parse Arguments ---
+if [[ "${1:-}" == "--dry-run" ]]; then
+    DRY_RUN=true
+    printf "Running in DRY-RUN mode. No files will be written.\n\n"
+elif [[ "${1:-}" == "--uninstall" ]]; then
+    check_root
+    uninstall
+    exit 0
+elif [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
+    show_help
+    exit 0
+fi
+
+# --- Main Logic ---
+main() {
+    # Step 1: Must be run as root
+    check_root
+
+    # Step 2: Get user configuration
+    get_config
+
+    # Step 3: Write all the files
+    write_main_script
+    write_config_file
+    write_apt_hook
+
+    # Step 4: Run a test
+    run_test
+
+    printf "\n✅ Success! Installation is complete.\n"
+    printf "You will now receive ntfy notifications after unattended-upgrades run.\n"
+}
+
+# --- Function Definitions ---
+
+# Show help message
+show_help() {
+    cat << 'HELPTEXT'
+ntfy-unattended-upgrades.sh - Install ntfy notifications for unattended-upgrades
+
+USAGE:
+    sudo ./ntfy-unattended-upgrades.sh [OPTIONS]
+
+OPTIONS:
+    (none)         Normal installation
+    --dry-run      Show what would be done without making changes
+    --uninstall    Remove all installed files
+    --help, -h     Show this help message
+
+DESCRIPTION:
+    This script installs a notification system that sends alerts via ntfy
+    whenever unattended-upgrades runs on your Debian/Ubuntu server.
+
+EXAMPLES:
+    sudo ./ntfy-unattended-upgrades.sh
+    sudo ./ntfy-unattended-upgrades.sh --dry-run
+    sudo ./ntfy-unattended-upgrades.sh --uninstall
+HELPTEXT
+}
+
+# Check if running as root
+check_root() {
+    if [[ "$EUID" -ne 0 ]]; then
+        printf "Error: This script must be run as root.\n" >&2
+        printf "Please run with: sudo %s\n" "$0" >&2
+        exit 1
+    fi
+}
+
+# Ask for ntfy settings
+get_config() {
+    printf "--- ntfy Configuration ---\n"
+    printf "Please enter your ntfy server details.\n\n"
+
+    read -rp "Enter your ntfy server URL (e.g., https://ntfy.mydomain.com): " NTFY_URL
+    read -rp "Enter the ntfy topic name (e.g., unattended-upgrades): " NTFY_TOPIC
+    read -rsp "Enter your ntfy access token (tk_...): " NTFY_TOKEN
+    printf "\n"
+
+    # Validate input
+    if [[ -z "$NTFY_URL" ]] || [[ -z "$NTFY_TOPIC" ]] || [[ -z "$NTFY_TOKEN" ]]; then
+        printf "\nError: All fields are required. Aborting.\n" >&2
+        exit 1
+    fi
+    
+    # Validate URL format
+    if [[ ! "$NTFY_URL" =~ ^https?:// ]]; then
+        printf "\nError: NTFY_URL must start with http:// or https://\n" >&2
+        exit 1
+    fi
+    
+    # Remove trailing slash from URL if present
+    NTFY_URL="${NTFY_URL%/}"
+    
+    # Validate token format
+    if [[ ! "$NTFY_TOKEN" =~ ^tk_ ]]; then
+        read -rp $'\nWarning: ntfy tokens typically start with \'tk_\'. Continue anyway? (y/N): ' confirm
+        if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+            printf "Installation cancelled.\n"
+            exit 0
+        fi
+    fi
+    
+    # Show configuration and confirm
+    printf "\nConfiguration received.\n"
+    printf "\nReview your settings:\n"
+    printf "  NTFY_URL:   %s\n" "$NTFY_URL"
+    printf "  NTFY_TOPIC: %s\n" "$NTFY_TOPIC"
+    printf "  NTFY_TOKEN: %s...\n" "${NTFY_TOKEN:0:8}"
+    read -rp $'\nProceed with installation? (y/N): ' confirm
+    if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+        printf "Installation cancelled.\n"
+        exit 0
+    fi
+}
+
+# Write the main notification script
+write_main_script() {
+    printf "Installing main script to %s...\n" "$SCRIPT_PATH"
+    
+    if [[ "$DRY_RUN" == true ]]; then
+        printf "[DRY-RUN] Would write script to %s\n" "$SCRIPT_PATH"
+        return
+    fi
+    
+    cat << 'EOF' > "$SCRIPT_PATH"
+#!/usr/bin/env bash
+# ntfy-unattended-upgrades - Send notifications after unattended-upgrades
+# This script is automatically installed and managed.
 
 set -euo pipefail
 IFS=$'\n\t'
 
 # --- Configuration ---
-NTFY_URL="https://ntfy.mydomain.com"
-NTFY_TOPIC="unattended-upgrades"
-# Access token (starts with tk_) - generate with: ntfy token add <username>
-NTFY_TOKEN="tk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-LOGFILE="/var/log/unattended-upgrades/unattended-upgrades.log"
-PRIORITY="3" # 1=min, 2=low, 3=default, 4=high, 5=max/urgent
+CONFIG_FILE="/etc/ntfy-upgrades.conf"
+
+if [[ ! -r "$CONFIG_FILE" ]]; then
+    printf "Error: Cannot read config file %s\n" "$CONFIG_FILE" >&2
+    exit 0 # Exit 0 so we don't break apt
+fi
+
+# Load the secret variables
+# shellcheck source=/dev/null
+source "$CONFIG_FILE"
+
+# --- Script Defaults (can be overridden) ---
+LOGFILE="${LOGFILE:-/var/log/unattended-upgrades/unattended-upgrades.log}"
+PRIORITY="${PRIORITY:-3}"
 # --- End Configuration ---
 
-# Check if the log file exists and is readable
 if [[ ! -r "$LOGFILE" ]]; then
-    printf "Error: Cannot read log file %s\n" "$LOGFILE" >&2
-    exit 1
+    printf "Warning: Log file %s not found. Sending basic notification.\n" "$LOGFILE" >&2
+    MESSAGE_BODY="Log file $LOGFILE not found. This may be normal if upgrades haven't run yet."
+else
+    MESSAGE_BODY=$(tail -n 15 "$LOGFILE")
 fi
 
 # --- Message Content ---
-MESSAGE_BODY=$(tail -n 15 "$LOGFILE")
 SYSTEM_HOSTNAME=$(hostname -f)
 TITLE="Unattended Upgrades: $SYSTEM_HOSTNAME"
 
-# Format message with markdown code block for better readability
-MESSAGE=$(cat <<EOF
+MESSAGE=$(cat <<EOM
 Recent upgrade activity on $SYSTEM_HOSTNAME
 
 \`\`\`
 $MESSAGE_BODY
 \`\`\`
-EOF
+EOM
 )
 # --- End Message Content ---
 
 # --- Send Notification ---
+if [[ -z "${NTFY_URL:-}" ]] || [[ -z "${NTFY_TOPIC:-}" ]] || [[ -z "${NTFY_TOKEN:-}" ]]; then
+    printf "Error: NTFY_URL, NTFY_TOPIC, or NTFY_TOKEN is not set in %s\n" "$CONFIG_FILE" >&2
+    exit 0 # Exit 0 so we don't break apt
+fi
+
 HTTP_CODE=$(curl -sf \
     --connect-timeout 15 \
     --max-time 30 \
@@ -67,10 +217,132 @@ HTTP_CODE=$(curl -sf \
 
 if [[ "$HTTP_CODE" -ne 200 ]]; then
     printf "Error: Failed to send notification to ntfy (HTTP %s)\n" "$HTTP_CODE" >&2
-    exit 1
+    exit 0 # Exit 0 so we don't break apt
 fi
-
-# --- End Send Notification ---
 
 printf "Notification sent successfully to %s/%s\n" "$NTFY_URL" "$NTFY_TOPIC"
 exit 0
+EOF
+
+    chmod +x "$SCRIPT_PATH"
+    printf "✓ Script installed\n"
+}
+
+# Write the secret config file
+write_config_file() {
+    printf "Writing configuration to %s...\n" "$CONFIG_PATH"
+    
+    if [[ "$DRY_RUN" == true ]]; then
+        printf "[DRY-RUN] Would write config to %s\n" "$CONFIG_PATH"
+        return
+    fi
+    
+    cat << EOF > "$CONFIG_PATH"
+# ntfy configuration for unattended-upgrades
+# This file contains secrets - keep permissions at 600
+NTFY_URL="$NTFY_URL"
+NTFY_TOPIC="$NTFY_TOPIC"
+NTFY_TOKEN="$NTFY_TOKEN"
+
+# Optional: Override notification priority (1=min, 2=low, 3=default, 4=high, 5=max)
+# PRIORITY="3"
+EOF
+
+    chmod 600 "$CONFIG_PATH"
+    chown root:root "$CONFIG_PATH"
+    printf "✓ Configuration saved (permissions: 600)\n"
+}
+
+# Write the APT hook file
+write_apt_hook() {
+    printf "Installing APT hook at %s...\n" "$HOOK_PATH"
+    
+    if [[ "$DRY_RUN" == true ]]; then
+        printf "[DRY-RUN] Would write hook to %s\n" "$HOOK_PATH"
+        return
+    fi
+    
+    cat << 'EOF' > "$HOOK_PATH"
+// Run script after unattended-upgrades
+Unattended-Upgrade::Post-Invoke {
+     // Check if the script exists and is executable, then run it.
+     // The "|| true" ensures that a notification failure
+     // (e.g., ntfy server is down) does NOT cause apt to fail.
+     "if [ -x /usr/local/bin/ntfy-unattended-upgrades ]; then /usr/local/bin/ntfy-unattended-upgrades || true; fi";
+};
+EOF
+
+    printf "✓ APT hook installed\n"
+}
+
+# Run a final test
+run_test() {
+    if [[ "$DRY_RUN" == true ]]; then
+        printf "\n[DRY-RUN] Would run test notification\n"
+        return
+    fi
+    
+    printf "\n--- Running Test Notification ---\n"
+    printf "Attempting to send a test notification...\n"
+    
+    # Check if the real log file exists
+    if [[ ! -r "$LOG_FILE" ]]; then
+        printf "Warning: Main log file '%s' not found (this is normal for new systems).\n" "$LOG_FILE"
+        printf "Sending a test notification with a custom message.\n"
+        
+        # Create a temporary log file for the test
+        TEST_LOG="/tmp/ntfy-test-log.$$"
+        cat > "$TEST_LOG" << 'EOF'
+This is a test notification from ntfy-unattended-upgrades.
+If you receive this, your setup is successful!
+
+The actual notifications will contain the last 15 lines of:
+/var/log/unattended-upgrades/unattended-upgrades.log
+EOF
+        
+        # Run the script, but override its LOGFILE variable
+        LOGFILE="$TEST_LOG" "$SCRIPT_PATH"
+        
+        # Clean up the test log
+        rm "$TEST_LOG"
+    else
+        # Log file exists, just run the script normally
+        "$SCRIPT_PATH"
+    fi
+    
+    printf "✓ Test complete. Please check your ntfy client.\n"
+}
+
+# Uninstall function
+uninstall() {
+    printf "Uninstalling ntfy-unattended-upgrades...\n\n"
+    
+    local removed=false
+    
+    if [[ -f "$SCRIPT_PATH" ]]; then
+        rm -f "$SCRIPT_PATH"
+        printf "✓ Removed %s\n" "$SCRIPT_PATH"
+        removed=true
+    fi
+    
+    if [[ -f "$CONFIG_PATH" ]]; then
+        rm -f "$CONFIG_PATH"
+        printf "✓ Removed %s\n" "$CONFIG_PATH"
+        removed=true
+    fi
+    
+    if [[ -f "$HOOK_PATH" ]]; then
+        rm -f "$HOOK_PATH"
+        printf "✓ Removed %s\n" "$HOOK_PATH"
+        removed=true
+    fi
+    
+    if [[ "$removed" == true ]]; then
+        printf "\n✅ Uninstall complete.\n"
+    else
+        printf "\nℹ️  No installed files found.\n"
+    fi
+}
+
+# --- Run the main function ---
+main
