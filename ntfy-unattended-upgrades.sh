@@ -7,7 +7,7 @@
 #    curl -fsSL https://raw.githubusercontent.com/buildplan/learning/main/ntfy-unattended-upgrades.sh | sudo bash
 #
 # Or download and review first (recommended):
-#   wget https://raw.githubusercontent.com/buildplan/learning/main/ntfy-unattended-upgrades.sh
+#    wget https://raw.githubusercontent.com/buildplan/learning/main/ntfy-unattended-upgrades.sh
 #    chmod +x install-ntfy-upgrades.sh
 #    sudo ./install-ntfy-upgrades.sh
 #
@@ -262,7 +262,7 @@ write_main_script() {
         return
     fi
     
-    cat << 'UUSCRIPT' > "$SCRIPT_PATH"
+    cat << 'MAIN_SCRIPT_EOF' > "$SCRIPT_PATH"
 #!/usr/bin/env bash
 # ntfy-unattended-upgrades - Send notifications after unattended-upgrades
 # This script is automatically installed and managed.
@@ -333,7 +333,7 @@ fi
 
 printf "Notification sent successfully to %s/%s\n" "$NTFY_URL" "$NTFY_TOPIC"
 exit 0
-EOF
+MAIN_SCRIPT_EOF
 
     chmod +x "$SCRIPT_PATH"
     printf "✓ Script installed\n"
@@ -373,7 +373,7 @@ write_apt_hook() {
         return
     fi
     
-    cat << 'EOF' > "$HOOK_PATH"
+    cat << 'APT_HOOK_EOF' > "$HOOK_PATH"
 // Run script after unattended-upgrades
 Unattended-Upgrade::Post-Invoke {
      // Check if the script exists and is executable, then run it.
@@ -381,7 +381,7 @@ Unattended-Upgrade::Post-Invoke {
      // (e.g., ntfy server is down) does NOT cause apt to fail.
      "if [ -x /usr/local/bin/ntfy-unattended-upgrades ]; then /usr/local/bin/ntfy-unattended-upgrades || true; fi";
 };
-UUSCRIPT
+APT_HOOK_EOF
 
     printf "✓ APT hook installed\n"
 }
@@ -402,17 +402,17 @@ run_test() {
         printf "Sending a test notification with a custom message.\n"
         
         # Create a temporary log file for the test
-        TEST_LOG="/tmp/ntfy-test-log.$$"
+        local TEST_LOG="/tmp/ntfy-test-log.$$"
         # Make sure tmp file is cleaned up on exit
         trap 'rm -f $TEST_LOG' EXIT
         
-        cat > "$TEST_LOG" << 'TESTLOG'
+        cat > "$TEST_LOG" << 'TEST_LOG_EOF'
 This is a test notification from ntfy-unattended-upgrades.
 If you receive this, your setup is successful!
 
 The actual notifications will contain the last 15 lines of:
 /var/log/unattended-upgrades/unattended-upgrades.log
-TESTLOG
+TEST_LOG_EOF
         
         # Run the script, but override its LOGFILE variable
         LOGFILE="$TEST_LOG" "$SCRIPT_PATH"
