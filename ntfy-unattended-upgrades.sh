@@ -4,17 +4,15 @@
 # 2. Make the Script Executable sudo chmod +x /usr/local/bin/ntfy-unattended-upgrades.sh
 # 3. Tell `apt` (which controls `unattended-upgrades`) to run your script using the `Post-Invoke` hook. 
 # This hook runs after `apt` operations are complete.
+#
 # Create a new configuration file in the `apt.conf.d` directory:
-#
 # sudo nano /etc/apt/apt.conf.d/99-notify-on-upgrade
-#
 # Paste the following lines into this new file:
 #
 # // Run script after unattended-upgrades
 # Unattended-Upgrade::Post-Invoke {
-#     // Add a small delay to ensure logs are fully written
-#     "sleep 2"; 
-#     "/usr/local/bin/ntfy-unattended-upgrades.sh";
+#     // Check if the script exists and is executable, then run it.
+#     "if [ -x /usr/local/bin/ntfy-unattended-upgrades ]; then /usr/local/bin/ntfy-unattended-upgrades || true; fi";
 # };
 #
 
