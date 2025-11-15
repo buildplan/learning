@@ -1,26 +1,27 @@
 #!/usr/bin/env bash
 
-# ntfy-unattended-upgrades.sh
+# install-ntfy-upgrades.sh
 # Installer for ntfy-unattended-upgrades notification system
 #
 # Quick Install:
-#   curl -fsSL https://raw.githubusercontent.com/buildplan/learning/main/ntfy-unattended-upgrades.sh | sudo bash
+#    curl -fsSL https://raw.githubusercontent.com/buildplan/learning/main/ntfy-unattended-upgrades.sh | sudo bash
 #
-#   Or download and review first (recommended):
+# Or download and review first (recommended):
 #   wget https://raw.githubusercontent.com/buildplan/learning/main/ntfy-unattended-upgrades.sh
-#   chmod +x ntfy-unattended-upgrades.sh
-#   sudo ./ntfy-unattended-upgrades.sh
+#    chmod +x install-ntfy-upgrades.sh
+#    sudo ./install-ntfy-upgrades.sh
 #
 # Usage:
-#   sudo ./ntfy-unattended-upgrades.sh              # Normal installation
-#   sudo ./ntfy-unattended-upgrades.sh --dry-run    # Show what would be done
-#   sudo ./ntfy-unattended-upgrades.sh --uninstall  # Remove everything
+#    sudo ./install-ntfy-upgrades.sh              # Normal installation
+#    sudo ./install-ntfy-upgrades.sh --dry-run    # Show what would be done
+#    sudo ./install-ntfy-upgrades.sh --uninstall  # Remove everything
 #
 # This script will:
-#   1. Install the notification script to /usr/local/bin/
-#   2. Create a secure config file at /etc/ntfy-upgrades.conf
-#   3. Configure an APT hook to trigger notifications
-#   4. Run a test notification
+#    1. Check if 'unattended-upgrades' is installed and enabled.
+#    2. Install the notification script to /usr/local/bin/
+#    3. Create a secure config file at /etc/ntfy-upgrades.conf
+#    4. Configure an APT hook to trigger notifications
+#    5. Run a test notification
 
 set -euo pipefail
 IFS=$'\n\t'
@@ -52,15 +53,18 @@ main() {
     # Step 1: Must be run as root
     check_root
 
-    # Step 2: Get user configuration
+    # Step 2: Check unattended-upgrades status
+    check_unattended_upgrades
+
+    # Step 3: Get user configuration
     get_config
 
-    # Step 3: Write all the files
+    # Step 4: Write all the files
     write_main_script
     write_config_file
     write_apt_hook
 
-    # Step 4: Run a test
+    # Step 5: Run a test
     run_test
 
     printf "\n✅ Success! Installation is complete.\n"
@@ -72,25 +76,25 @@ main() {
 # Show help message
 show_help() {
     cat << 'HELPTEXT'
-ntfy-unattended-upgrades.sh - Install ntfy notifications for unattended-upgrades
+install-ntfy-upgrades.sh - Install ntfy notifications for unattended-upgrades
 
 USAGE:
-    sudo ./ntfy-unattended-upgrades.sh [OPTIONS]
+    sudo ./install-ntfy-upgrades.sh [OPTIONS]
 
 OPTIONS:
-    (none)         Normal installation
-    --dry-run      Show what would be done without making changes
-    --uninstall    Remove all installed files
-    --help, -h     Show this help message
+    (none)           Normal installation
+    --dry-run        Show what would be done without making changes
+    --uninstall      Remove all installed files
+    --help, -h       Show this help message
 
 DESCRIPTION:
     This script installs a notification system that sends alerts via ntfy
     whenever unattended-upgrades runs on your Debian/Ubuntu server.
 
 EXAMPLES:
-    sudo ./ntfy-unattended-upgrades.sh
-    sudo ./ntfy-unattended-upgrades.sh --dry-run
-    sudo ./ntfy-unattended-upgrades.sh --uninstall
+    sudo ./install-ntfy-upgrades.sh
+    sudo ./install-ntfy-upgrades.sh --dry-run
+    sudo ./install-ntfy-upgrades.sh --uninstall
 HELPTEXT
 }
 
@@ -103,9 +107,108 @@ check_root() {
     fi
 }
 
+# Check if unattended-upgrades is installed and enabled
+check_unattended_upgrades() {
+    printf "\n--- Checking Unattended-Upgrades Status ---\n"
+    
+    # Check if package is installed
+    if ! dpkg-query -W -f='${Status}' unattended-upgrades 2>/dev/null | grep -q "install ok installed"; then
+        printf "⚠️  Package 'unattended-upgrades' is NOT installed.\n"
+        
+        if [[ "$DRY_RUN" == true ]]; then
+            printf "[DRY-RUN] Would prompt to install 'unattended-upgrades'\n"
+            return
+        fi
+
+        read -rp $'Would you like to install it now? (y/N): ' install_confirm
+        if [[ "$install_confirm" =~ ^[Yy]$ ]]; then
+            printf "Installing unattended-upgrades...\n"
+            apt-get update -qq
+            apt-get install -y unattended-upgrades
+            printf "✓ Package installed\n"
+        else
+            printf "\nWarning: Notifications will not work without unattended-upgrades installed.\n"
+            read -rp $'Continue anyway? (y/N): ' continue_confirm
+            if [[ ! "$continue_confirm" =~ ^[Yy]$ ]]; then
+                printf "Installation cancelled.\n"
+                exit 0
+            fi
+            return
+        fi
+    else
+        printf "✓ Package 'unattended-upgrades' is installed\n"
+    fi
+    
+    # Check if it's enabled by looking at the config file
+    local config_file="/etc/apt/apt.conf.d/20auto-upgrades"
+    local is_enabled=false
+    
+    if [[ -f "$config_file" ]]; then
+        if grep -q 'APT::Periodic::Unattended-Upgrade "1"' "$config_file"; then
+            is_enabled=true
+            printf "✓ Unattended-upgrades is enabled\n"
+        fi
+    fi
+    
+    if [[ "$is_enabled" == false ]]; then
+        printf "⚠️  Unattended-upgrades is NOT enabled.\n"
+
+        if [[ "$DRY_RUN" == true ]]; then
+            printf "[DRY-RUN] Would prompt to enable 'unattended-upgrades'\n"
+            return
+        fi
+
+        read -rp $'Would you like to enable it now? (y/N): ' enable_confirm
+        if [[ "$enable_confirm" =~ ^[Yy]$ ]]; then
+            enable_unattended_upgrades
+        else
+            printf "\nWarning: Your system will not automatically upgrade without this enabled.\n"
+            read -rp $'Continue anyway? (y/N): ' continue_confirm
+            if [[ ! "$continue_confirm" =~ ^[Yy]$ ]]; then
+                printf "Installation cancelled.\n"
+                exit 0
+            fi
+        fi
+    fi
+    
+    # Check systemd timers (this is a read-only check, safe for dry-run)
+    printf "\nChecking systemd timers...\n"
+    if systemctl is-active --quiet apt-daily-upgrade.timer; then
+        printf "✓ apt-daily-upgrade.timer is active\n"
+    else
+        printf "⚠️  apt-daily-upgrade.timer is NOT active\n"
+    fi
+}
+
+# Enable unattended-upgrades non-interactively
+enable_unattended_upgrades() {
+    printf "Enabling unattended-upgrades...\n"
+    
+    if [[ "$DRY_RUN" == true ]]; then
+        printf "[DRY-RUN] Would write /etc/apt/apt.conf.d/20auto-upgrades\n"
+        printf "[DRY-RUN] Would enable systemd timers\n"
+        printf "✓ Unattended-upgrades enabled (dry-run)\n"
+        return
+    fi
+    
+    # Create the config file non-interactively
+    cat > /etc/apt/apt.conf.d/20auto-upgrades << 'EOF'
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+APT::Periodic::Download-Upgradeable-Packages "1";
+APT::Periodic::AutocleanInterval "7";
+EOF
+    
+    # Ensure systemd timers are enabled
+    systemctl enable apt-daily.timer 2>/dev/null || true
+    systemctl enable apt-daily-upgrade.timer 2>/dev/null || true
+    
+    printf "✓ Unattended-upgrades enabled\n"
+}
+
 # Ask for ntfy settings
 get_config() {
-    printf "--- ntfy Configuration ---\n"
+    printf "\n--- ntfy Configuration ---\n"
     printf "Please enter your ntfy server details.\n\n"
 
     read -rp "Enter your ntfy server URL (e.g., https://ntfy.mydomain.com): " NTFY_URL
@@ -152,14 +255,14 @@ get_config() {
 
 # Write the main notification script
 write_main_script() {
-    printf "Installing main script to %s...\n" "$SCRIPT_PATH"
+    printf "\nInstalling main script to %s...\n" "$SCRIPT_PATH"
     
     if [[ "$DRY_RUN" == true ]]; then
         printf "[DRY-RUN] Would write script to %s\n" "$SCRIPT_PATH"
         return
     fi
     
-    cat << 'EOF' > "$SCRIPT_PATH"
+    cat << 'UUSCRIPT' > "$SCRIPT_PATH"
 #!/usr/bin/env bash
 # ntfy-unattended-upgrades - Send notifications after unattended-upgrades
 # This script is automatically installed and managed.
@@ -300,19 +403,23 @@ run_test() {
         
         # Create a temporary log file for the test
         TEST_LOG="/tmp/ntfy-test-log.$$"
+        # Make sure tmp file is cleaned up on exit
+        trap 'rm -f $TEST_LOG' EXIT
+        
         cat > "$TEST_LOG" << 'EOF'
 This is a test notification from ntfy-unattended-upgrades.
 If you receive this, your setup is successful!
 
 The actual notifications will contain the last 15 lines of:
 /var/log/unattended-upgrades/unattended-upgrades.log
-EOF
+UUSCRIPT
         
         # Run the script, but override its LOGFILE variable
         LOGFILE="$TEST_LOG" "$SCRIPT_PATH"
         
         # Clean up the test log
-        rm "$TEST_LOG"
+        rm -f "$TEST_LOG"
+        trap - EXIT # Clear the trap
     else
         # Log file exists, just run the script normally
         "$SCRIPT_PATH"
