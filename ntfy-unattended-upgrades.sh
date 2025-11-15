@@ -120,6 +120,12 @@ check_unattended_upgrades() {
             return
         fi
 
+        # check apt-get
+        if ! command -v apt-get &> /dev/null; then
+            printf "Error: apt-get not found. This script requires Debian/Ubuntu.\n" >&2
+            exit 1
+        fi
+
         read -rp $'Would you like to install it now? (y/N): ' install_confirm
         if [[ "$install_confirm" =~ ^[Yy]$ ]]; then
             printf "Installing unattended-upgrades...\n"
