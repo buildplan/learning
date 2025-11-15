@@ -381,7 +381,7 @@ Unattended-Upgrade::Post-Invoke {
      // (e.g., ntfy server is down) does NOT cause apt to fail.
      "if [ -x /usr/local/bin/ntfy-unattended-upgrades ]; then /usr/local/bin/ntfy-unattended-upgrades || true; fi";
 };
-EOF
+UUSCRIPT
 
     printf "✓ APT hook installed\n"
 }
@@ -406,13 +406,13 @@ run_test() {
         # Make sure tmp file is cleaned up on exit
         trap 'rm -f $TEST_LOG' EXIT
         
-        cat > "$TEST_LOG" << 'EOF'
+        cat > "$TEST_LOG" << 'TESTLOG'
 This is a test notification from ntfy-unattended-upgrades.
 If you receive this, your setup is successful!
 
 The actual notifications will contain the last 15 lines of:
 /var/log/unattended-upgrades/unattended-upgrades.log
-UUSCRIPT
+TESTLOG
         
         # Run the script, but override its LOGFILE variable
         LOGFILE="$TEST_LOG" "$SCRIPT_PATH"
