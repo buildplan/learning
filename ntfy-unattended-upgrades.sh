@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 
 # 1. Save script to a standard location for system-wide scripts, like /usr/local/bin/.
-# 2. Make the Script Executable sudo chmod +x /usr/local/bin/ntfy-unattended-upgrades.sh
+# Download and place the script below in /usr/local/bin/ with:
+# sudo curl -Lo /usr/local/bin/ntfy-unattended-upgrades https://raw.githubusercontent.com/buildplan/learning/refs/heads/main/ntfy-unattended-upgrades.sh
+# 2. Make the Script Executable sudo chmod +x /usr/local/bin/ntfy-unattended-upgrades
 # 3. Tell `apt` (which controls `unattended-upgrades`) to run your script using the `Post-Invoke` hook. 
 # This hook runs after `apt` operations are complete.
 #
