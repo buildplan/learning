@@ -35,20 +35,9 @@ LOG_FILE="/var/log/unattended-upgrades/unattended-upgrades.log"
 # --- Variables ---
 DRY_RUN=false
 
-# --- Parse Arguments ---
-if [[ "${1:-}" == "--dry-run" ]]; then
-    DRY_RUN=true
-    printf "Running in DRY-RUN mode. No files will be written.\n\n"
-elif [[ "${1:-}" == "--uninstall" ]]; then
-    check_root
-    uninstall
-    exit 0
-elif [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
-    show_help
-    exit 0
-fi
+# --- Function Definitions ---
 
-# --- Main Logic ---
+# Main installation function
 main() {
     # Step 1: Must be run as root
     check_root
@@ -70,8 +59,6 @@ main() {
     printf "\n✅ Success! Installation is complete.\n"
     printf "You will now receive ntfy notifications after unattended-upgrades run.\n"
 }
-
-# --- Function Definitions ---
 
 # Show help message
 show_help() {
@@ -110,11 +97,11 @@ check_root() {
 # Check if unattended-upgrades is installed and enabled
 check_unattended_upgrades() {
     printf "\n--- Checking Unattended-Upgrades Status ---\n"
-    
+
     # Check if package is installed
     if ! dpkg-query -W -f='${Status}' unattended-upgrades 2>/dev/null | grep -q "install ok installed"; then
         printf "⚠️  Package 'unattended-upgrades' is NOT installed.\n"
-        
+
         if [[ "$DRY_RUN" == true ]]; then
             printf "[DRY-RUN] Would prompt to install 'unattended-upgrades'\n"
             return
@@ -144,18 +131,18 @@ check_unattended_upgrades() {
     else
         printf "✓ Package 'unattended-upgrades' is installed\n"
     fi
-    
+
     # Check if it's enabled by looking at the config file
     local config_file="/etc/apt/apt.conf.d/20auto-upgrades"
     local is_enabled=false
-    
+
     if [[ -f "$config_file" ]]; then
         if grep -q 'APT::Periodic::Unattended-Upgrade "1"' "$config_file"; then
             is_enabled=true
             printf "✓ Unattended-upgrades is enabled\n"
         fi
     fi
-    
+
     if [[ "$is_enabled" == false ]]; then
         printf "⚠️  Unattended-upgrades is NOT enabled.\n"
 
@@ -176,7 +163,7 @@ check_unattended_upgrades() {
             fi
         fi
     fi
-    
+
     # Check systemd timers (this is a read-only check, safe for dry-run)
     printf "\nChecking systemd timers...\n"
     if systemctl is-active --quiet apt-daily-upgrade.timer; then
@@ -189,14 +176,14 @@ check_unattended_upgrades() {
 # Enable unattended-upgrades non-interactively
 enable_unattended_upgrades() {
     printf "Enabling unattended-upgrades...\n"
-    
+
     if [[ "$DRY_RUN" == true ]]; then
         printf "[DRY-RUN] Would write /etc/apt/apt.conf.d/20auto-upgrades\n"
         printf "[DRY-RUN] Would enable systemd timers\n"
         printf "✓ Unattended-upgrades enabled (dry-run)\n"
         return
     fi
-    
+
     # Create the config file non-interactively
     cat > /etc/apt/apt.conf.d/20auto-upgrades << 'EOF'
 APT::Periodic::Update-Package-Lists "1";
@@ -204,11 +191,11 @@ APT::Periodic::Unattended-Upgrade "1";
 APT::Periodic::Download-Upgradeable-Packages "1";
 APT::Periodic::AutocleanInterval "7";
 EOF
-    
+
     # Ensure systemd timers are enabled
     systemctl enable apt-daily.timer 2>/dev/null || true
     systemctl enable apt-daily-upgrade.timer 2>/dev/null || true
-    
+
     printf "✓ Unattended-upgrades enabled\n"
 }
 
@@ -227,16 +214,16 @@ get_config() {
         printf "\nError: All fields are required. Aborting.\n" >&2
         exit 1
     fi
-    
+
     # Validate URL format
     if [[ ! "$NTFY_URL" =~ ^https?:// ]]; then
         printf "\nError: NTFY_URL must start with http:// or https://\n" >&2
         exit 1
     fi
-    
+
     # Remove trailing slash from URL if present
     NTFY_URL="${NTFY_URL%/}"
-    
+
     # Validate token format
     if [[ ! "$NTFY_TOKEN" =~ ^tk_ ]]; then
         read -rp $'\nWarning: ntfy tokens typically start with \'tk_\'. Continue anyway? (y/N): ' confirm
@@ -245,7 +232,7 @@ get_config() {
             exit 0
         fi
     fi
-    
+
     # Show configuration and confirm
     printf "\nConfiguration received.\n"
     printf "\nReview your settings:\n"
@@ -262,12 +249,12 @@ get_config() {
 # Write the main notification script
 write_main_script() {
     printf "\nInstalling main script to %s...\n" "$SCRIPT_PATH"
-    
+
     if [[ "$DRY_RUN" == true ]]; then
         printf "[DRY-RUN] Would write script to %s\n" "$SCRIPT_PATH"
         return
     fi
-    
+
     cat << 'MAIN_SCRIPT_EOF' > "$SCRIPT_PATH"
 #!/usr/bin/env bash
 # ntfy-unattended-upgrades - Send notifications after unattended-upgrades
@@ -348,12 +335,12 @@ MAIN_SCRIPT_EOF
 # Write the secret config file
 write_config_file() {
     printf "Writing configuration to %s...\n" "$CONFIG_PATH"
-    
+
     if [[ "$DRY_RUN" == true ]]; then
         printf "[DRY-RUN] Would write config to %s\n" "$CONFIG_PATH"
         return
     fi
-    
+
     cat << EOF > "$CONFIG_PATH"
 # ntfy configuration for unattended-upgrades
 # This file contains secrets - keep permissions at 600
@@ -373,12 +360,12 @@ EOF
 # Write the APT hook file
 write_apt_hook() {
     printf "Installing APT hook at %s...\n" "$HOOK_PATH"
-    
+
     if [[ "$DRY_RUN" == true ]]; then
         printf "[DRY-RUN] Would write hook to %s\n" "$HOOK_PATH"
         return
     fi
-    
+
     cat << 'APT_HOOK_EOF' > "$HOOK_PATH"
 // Run script after unattended-upgrades
 Unattended-Upgrade::Post-Invoke {
@@ -398,20 +385,20 @@ run_test() {
         printf "\n[DRY-RUN] Would run test notification\n"
         return
     fi
-    
+
     printf "\n--- Running Test Notification ---\n"
     printf "Attempting to send a test notification...\n"
-    
+
     # Check if the real log file exists
     if [[ ! -r "$LOG_FILE" ]]; then
         printf "Warning: Main log file '%s' not found (this is normal for new systems).\n" "$LOG_FILE"
         printf "Sending a test notification with a custom message.\n"
-        
+
         # Create a temporary log file for the test
         local TEST_LOG="/tmp/ntfy-test-log.$$"
         # Make sure tmp file is cleaned up on exit
         trap 'rm -f $TEST_LOG' EXIT
-        
+
         cat > "$TEST_LOG" << 'TEST_LOG_EOF'
 This is a test notification from ntfy-unattended-upgrades.
 If you receive this, your setup is successful!
@@ -419,10 +406,10 @@ If you receive this, your setup is successful!
 The actual notifications will contain the last 15 lines of:
 /var/log/unattended-upgrades/unattended-upgrades.log
 TEST_LOG_EOF
-        
+
         # Run the script, but override its LOGFILE variable
         LOGFILE="$TEST_LOG" "$SCRIPT_PATH"
-        
+
         # Clean up the test log
         rm -f "$TEST_LOG"
         trap - EXIT # Clear the trap
@@ -430,34 +417,34 @@ TEST_LOG_EOF
         # Log file exists, just run the script normally
         "$SCRIPT_PATH"
     fi
-    
+
     printf "✓ Test complete. Please check your ntfy client.\n"
 }
 
 # Uninstall function
 uninstall() {
     printf "Uninstalling ntfy-unattended-upgrades...\n\n"
-    
+
     local removed=false
-    
+
     if [[ -f "$SCRIPT_PATH" ]]; then
         rm -f "$SCRIPT_PATH"
         printf "✓ Removed %s\n" "$SCRIPT_PATH"
         removed=true
     fi
-    
+
     if [[ -f "$CONFIG_PATH" ]]; then
         rm -f "$CONFIG_PATH"
         printf "✓ Removed %s\n" "$CONFIG_PATH"
         removed=true
     fi
-    
+
     if [[ -f "$HOOK_PATH" ]]; then
         rm -f "$HOOK_PATH"
         printf "✓ Removed %s\n" "$HOOK_PATH"
         removed=true
     fi
-    
+
     if [[ "$removed" == true ]]; then
         printf "\n✅ Uninstall complete.\n"
     else
@@ -465,5 +452,23 @@ uninstall() {
     fi
 }
 
-# --- Run the main function ---
-main
+# --- Main Execution ---
+#
+# Parse arguments *after* all functions are defined.
+# This block is the only top-level code that runs.
+
+if [[ "${1:-}" == "--dry-run" ]]; then
+    DRY_RUN=true
+    printf "Running in DRY-RUN mode. No files will be written.\n\n"
+    main # Run the main install logic, but with DRY_RUN=true
+elif [[ "${1-(unset)}" == "--uninstall" ]]; then
+    check_root
+    uninstall
+elif [[ "${1-(unset)}" == "--help" ]] || [[ "${1-(unset)}" == "-h" ]]; then
+    show_help
+else
+    # Default action: run the full installation
+    main
+fi
+
+exit 0
