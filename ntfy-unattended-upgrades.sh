@@ -1,8 +1,15 @@
 #!/usr/bin/env bash
 
 # ntfy-unattended-upgrades.sh
-# wget https://raw.githubusercontent.com/buildplan/learning/refs/heads/main/ntfy-unattended-upgrades.sh && chmod +x ntfy-unattended-upgrades.sh
 # Installer for ntfy-unattended-upgrades notification system
+#
+# Quick Install:
+#   curl -fsSL https://raw.githubusercontent.com/buildplan/learning/main/ntfy-unattended-upgrades.sh | sudo bash
+#
+#   Or download and review first (recommended):
+#   wget https://raw.githubusercontent.com/buildplan/learning/main/ntfy-unattended-upgrades.sh
+#   chmod +x ntfy-unattended-upgrades.sh
+#   sudo ./ntfy-unattended-upgrades.sh
 #
 # Usage:
 #   sudo ./ntfy-unattended-upgrades.sh              # Normal installation
