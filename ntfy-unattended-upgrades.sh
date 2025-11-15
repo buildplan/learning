@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 # ntfy-unattended-upgrades.sh
+# wget https://raw.githubusercontent.com/buildplan/learning/refs/heads/main/ntfy-unattended-upgrades.sh && chmod +x ntfy-unattended-upgrades.sh
 # Installer for ntfy-unattended-upgrades notification system
 #
 # Usage:
