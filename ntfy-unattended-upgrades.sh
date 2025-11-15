@@ -453,22 +453,24 @@ uninstall() {
 }
 
 # --- Main Execution ---
-#
-# Parse arguments *after* all functions are defined.
-# This block is the only top-level code that runs.
 
-if [[ "${1:-}" == "--dry-run" ]]; then
+# Check for no arguments, default to main()
+if [[ -z "${1:-}" ]]; then
+    main
+elif [[ "${1:-}" == "--dry-run" ]]; then
     DRY_RUN=true
     printf "Running in DRY-RUN mode. No files will be written.\n\n"
-    main # Run the main install logic, but with DRY_RUN=true
-elif [[ "${1-(unset)}" == "--uninstall" ]]; then
+    main
+elif [[ "${1:-}" == "--uninstall" ]]; then
     check_root
     uninstall
-elif [[ "${1-(unset)}" == "--help" ]] || [[ "${1-(unset)}" == "-h" ]]; then
+elif [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
     show_help
 else
-    # Default action: run the full installation
-    main
+    # Catch-all for any other unknown flags
+    printf "Error: Unknown argument: %s\n\n" "$1" >&2
+    show_help
+    exit 1
 fi
 
 exit 0
