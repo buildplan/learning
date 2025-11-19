@@ -37,7 +37,9 @@ logpath = /var/log/ufw.log
 
 ---
 
-### For ufw-probes jail - create `/etc/fail2ban/filter.d/ufw-probes.conf`
+### For ufw-probes jail
+
+create `/etc/fail2ban/filter.d/ufw-probes.conf`
 
 ```conf
 [Definition]
