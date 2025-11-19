@@ -14,4 +14,32 @@ ignoreip = 127.0.0.1/8 ::1 fe80::/10 172.80.0.0/16 172.16.0.0/12 10.0.0.0/8
 # Cloudflare IPv6
            2400:cb00::/32 2606:4700::/32 2803:f800::/32 2405:b500::/32
            2405:8100::/32 2a06:98c0::/29 2c0f:f248::/32
+
+bantime = 1d
+findtime = 10m
+maxretry = 5
+banaction = ufw
+
+# SSH port 
+[sshd]
+enabled = true
+port = 5555
+
+# This jail monitors UFW logs for rejected packets (port scans, etc.).
+[ufw-probes]
+enabled = true
+port = all
+filter = ufw-probes
+logpath = /var/log/ufw.log
+```
+
+---
+
+### For ufw-probes jail - create `/etc/fail2ban/filter.d/ufw-probes.conf`
+
+```conf
+[Definition]
+# This regex looks for the standard "[UFW BLOCK]" message in /var/log/ufw.log
+failregex = \[UFW BLOCK\] IN=.* OUT=.* SRC=<HOST>
+ignoreregex =
 ```
