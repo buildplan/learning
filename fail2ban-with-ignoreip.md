@@ -1,5 +1,7 @@
 ## Ignore IP addresses for fail2ban setup. 
 
+Create `/etc/fail2ban/jail.local`
+
 ```ini
 [DEFAULT]
 # Local networks and Docker
