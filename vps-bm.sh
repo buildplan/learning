@@ -11,6 +11,7 @@ export LANG=C
 DISK_DIR_DEFAULT=${PWD:-.}
 DISK_DIR=${BENCH_TMPDIR:-$DISK_DIR_DEFAULT}
 
+# TEST_FILE will be set in main() after parsing options
 TEST_FILE=""
 
 DB_FILE="${PWD:-.}/benchmark_results.db"
@@ -37,6 +38,7 @@ network_ping_ms="N/A"
 OPT_SAVE=0
 OPT_COMPARE=0
 OPT_LIST=0
+INSTALL_SPEEDTEST_CLI="ookla"
 
 # ============================================================================
 # Helpers
@@ -66,11 +68,7 @@ log_summary_header() {
 }
 
 get_status_indicator() {
-  if [ "$1" != "N/A" ]; then
-    printf "%s✓%s" "$GREEN" "$NC"
-  else
-    printf "%s✗%s" "$RED" "$NC"
-  fi
+  if [ "$1" != "N/A" ]; then printf "%s✓%s" "$GREEN" "$NC"; else printf "%s✗%s" "$RED" "$NC"; fi
 }
 
 to_sql_null() {
@@ -216,6 +214,107 @@ EOF
 }
 
 # ============================================================================
+# Installation & Dependency Management
+# ============================================================================
+
+try_install_speedtest_ookla() {
+  _url=$1
+  _mgr=$2
+  if command -v speedtest >/dev/null 2>&1; then return 0; fi
+
+  if command -v bash >/dev/null 2>&1; then
+    if curl -sfS "$_url" | bash; then
+      if "$_mgr" install -y speedtest >/dev/null 2>&1; then
+        INSTALL_SPEEDTEST_CLI="ookla"
+        printf "%s✓%s Ookla Speedtest installed\n" "$GREEN" "$NC"
+        return 0
+      fi
+    fi
+  fi
+  return 1
+}
+
+install_speedtest_python() {
+  if command -v speedtest-cli >/dev/null 2>&1; then
+    INSTALL_SPEEDTEST_CLI="python"
+    return 0
+  fi
+
+  if ! command -v pip3 >/dev/null 2>&1; then
+    if command -v apt-get >/dev/null 2>&1; then
+      apt-get install -y python3-pip >/dev/null 2>&1
+    elif command -v dnf >/dev/null 2>&1; then
+      dnf install -y python3-pip >/dev/null 2>&1
+    elif command -v yum >/dev/null 2>&1; then
+      yum install -y python3-pip >/dev/null 2>&1
+    fi
+  fi
+
+  if command -v pip3 >/dev/null 2>&1; then
+    pip3 install --break-system-packages speedtest-cli >/dev/null 2>&1 || \
+    pip3 install speedtest-cli >/dev/null 2>&1 || true
+    if command -v speedtest-cli >/dev/null 2>&1; then
+      INSTALL_SPEEDTEST_CLI="python"
+      printf "%s✓%s speedtest-cli (Python) installed\n" "$GREEN" "$NC"
+      return 0
+    fi
+  fi
+  return 1
+}
+
+check_deps() {
+  _missing_core=""
+  for t in sysbench bc sqlite3 curl; do
+    command -v "$t" >/dev/null 2>&1 || _missing_core="$_missing_core $t"
+  done
+
+  _missing_net=0
+  if ! command -v speedtest >/dev/null 2>&1 && ! command -v speedtest-cli >/dev/null 2>&1; then
+    _missing_net=1
+  fi
+
+  if [ -z "$_missing_core" ] && [ "$_missing_net" -eq 0 ]; then
+    log_info "Dependencies: OK"
+    return 0
+  fi
+
+  printf "\n%sMissing Dependencies:%s%s" "$BLUE" "$NC" "$_missing_core"
+  [ "$_missing_net" -eq 1 ] && printf " speedtest"
+  printf "\n"
+
+  if [ "$(id -u)" -ne 0 ]; then
+    error_exit "Missing dependencies. Run as root/sudo to install."
+  fi
+
+  if yes_no_prompt "Install missing dependencies?"; then
+    log_info "Installing Dependencies"
+
+    if command -v apt-get >/dev/null 2>&1; then
+      apt-get update -y >/dev/null 2>&1
+      [ -n "$_missing_core" ] && apt-get install -y $_missing_core >/dev/null 2>&1
+      if [ "$_missing_net" -eq 1 ]; then
+        try_install_speedtest_ookla "https://packagecloud.io/install/repositories/ookla/speedtest-cli/script.deb.sh" "apt-get" || install_speedtest_python
+      fi
+    elif command -v dnf >/dev/null 2>&1; then
+      [ -n "$_missing_core" ] && dnf install -y $_missing_core >/dev/null 2>&1
+      if [ "$_missing_net" -eq 1 ]; then
+        try_install_speedtest_ookla "https://packagecloud.io/install/repositories/ookla/speedtest-cli/script.rpm.sh" "dnf" || install_speedtest_python
+      fi
+    elif command -v yum >/dev/null 2>&1; then
+      [ -n "$_missing_core" ] && yum install -y $_missing_core >/dev/null 2>&1
+      if [ "$_missing_net" -eq 1 ]; then
+        try_install_speedtest_ookla "https://packagecloud.io/install/repositories/ookla/speedtest-cli/script.rpm.sh" "yum" || install_speedtest_python
+      fi
+    else
+      error_exit "Unsupported package manager. Install manually."
+    fi
+    printf "%s✓%s Installation complete.\n" "$GREEN" "$NC"
+  else
+    error_exit "Cannot proceed without dependencies."
+  fi
+}
+
+# ============================================================================
 # Benchmarks
 # ============================================================================
 
@@ -232,10 +331,22 @@ parse_dd() {
 run_disk_benchmarks() {
   log_section "Disk Benchmark: Target $DISK_DIR"
 
-  # Validate writability before attempting
-  if [ ! -w "$DISK_DIR" ]; then
-    printf "%sError: Directory is not writable. Skipping disk tests.%s\n" "$RED" "$NC"
+  if [ ! -d "$DISK_DIR" ]; then
+    printf "%sError: Directory '%s' does not exist. Skipping disk tests.%s\n" "$RED" "$DISK_DIR" "$NC"
     return
+  fi
+
+  if [ ! -w "$DISK_DIR" ]; then
+    printf "%sError: Directory '%s' is not writable. Skipping disk tests.%s\n" "$RED" "$DISK_DIR" "$NC"
+    return
+  fi
+
+  # Optional warning if DISK_DIR is on tmpfs (Linux-specific, best-effort)
+  if command -v df >/dev/null 2>&1; then
+    _fstype=$(df -T "$DISK_DIR" 2>/dev/null | awk 'NR==2 {print $2}')
+    if [ "$_fstype" = "tmpfs" ]; then
+      printf "%sWarning: %s appears to be tmpfs (RAM). Disk benchmark will measure RAM speed, not persistent storage.%s\n" "$YELLOW" "$DISK_DIR" "$NC"
+    fi
   fi
 
   log_info "Write Buffered (1GiB)"
@@ -304,26 +415,6 @@ run_network_benchmark() {
   [ -z "$network_ping_ms" ] && network_ping_ms="N/A"
 }
 
-check_deps() {
-  _missing=""
-  for t in sysbench bc sqlite3 curl; do
-    command -v "$t" >/dev/null 2>&1 || _missing="$_missing $t"
-  done
-  if [ -z "$_missing" ]; then
-    log_info "Dependencies: OK"
-    return 0
-  fi
-  printf "\n%sMissing:%s%s\n" "$BLUE" "$NC" "$_missing"
-  if [ "$(id -u)" -eq 0 ] && yes_no_prompt "Install?"; then
-      if command -v apt-get >/dev/null 2>&1; then apt-get update && apt-get install -y $_missing
-      elif command -v dnf >/dev/null 2>&1; then dnf install -y $_missing
-      elif command -v yum >/dev/null 2>&1; then yum install -y $_missing
-      else error_exit "No pkg manager found."; fi
-      return 0
-  fi
-  error_exit "Install dependencies manually."
-}
-
 # ============================================================================
 # Main
 # ============================================================================
@@ -359,7 +450,29 @@ USAGE
   TEST_FILE="${DISK_DIR}/vps_bench_testfile_$$-${_ts_suffix}"
 
   check_deps
-  log_info "System: $(hostname)"
+
+  log_info "System Information"
+  printf "Hostname: %s\n" "$(hostname)"
+  uptime | awk -F'( |,|:)+' '{if ($6=="up") print "Uptime: " $7"d "$9"h "$10"m"; else print "Uptime: " $6"d "$8"h "$9"m"}' 2>/dev/null || uptime
+  if command -v lscpu >/dev/null 2>&1; then
+    lscpu | grep -E '^Model name:|^CPU\(s\):|^Thread\(s\) per core:' | sed 's/^[ \t]*//'
+  fi
+  if command -v free >/dev/null 2>&1; then
+    printf "\nMemory:\n"
+    free -h
+  fi
+  if command -v lsblk >/dev/null 2>&1; then
+    printf "\nDisk Map:\n"
+    lsblk -o NAME,SIZE,TYPE,MOUNTPOINT 2>/dev/null || true
+  fi
+
+  log_section "Tool Versions"
+  sysbench --version 2>/dev/null || printf "sysbench: N/A\n"
+  if command -v speedtest >/dev/null 2>&1; then
+      speedtest --version | head -n 1
+  elif command -v speedtest-cli >/dev/null 2>&1; then
+      speedtest-cli --version | head -n 1
+  fi
 
   log_info "Starting Benchmarks"
   run_cpu_benchmarks
@@ -369,9 +482,6 @@ USAGE
   _ts=$(date '+%Y-%m-%d %H:%M:%S')
   _ts_iso=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
 
-  # --------------------------------------------------------------------------
-  # FINAL RESULTS SUMMARY (Formatted)
-  # --------------------------------------------------------------------------
   log_summary_header "FINAL RESULTS SUMMARY"
 
   printf "\n%sExecution Details:%s\n" "$BLUE" "$NC"
@@ -402,9 +512,6 @@ USAGE
   printf "  %-20s [%s]: %s%s%s Mbps\n" "Upload" "$_s_nu" "$GREEN" "$network_upload_mbps" "$NC"
   printf "  %-20s [%s]: %s%s%s ms\n" "Latency" "$_s_np" "$GREEN" "$network_ping_ms" "$NC"
 
-  # --------------------------------------------------------------------------
-  # DB Operations
-  # --------------------------------------------------------------------------
   if [ "$OPT_SAVE" -eq 1 ]; then
     init_database
     save_to_database "$_ts_iso" "$(hostname)"
