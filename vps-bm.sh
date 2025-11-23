@@ -65,6 +65,14 @@ log_summary_header() {
   printf "%s===================================%s\n" "$GREEN" "$NC"
 }
 
+get_status_indicator() {
+  if [ "$1" != "N/A" ]; then
+    printf "%s✓%s" "$GREEN" "$NC"
+  else
+    printf "%s✗%s" "$RED" "$NC"
+  fi
+}
+
 to_sql_null() {
   if [ "$1" = "N/A" ]; then printf "NULL"; else printf "%s" "$1"; fi
 }
@@ -358,12 +366,45 @@ USAGE
   run_disk_benchmarks
   run_network_benchmark || true
 
+  _ts=$(date '+%Y-%m-%d %H:%M:%S')
   _ts_iso=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
-  log_summary_header "RESULTS"
-  printf "CPU Single: %s events/s\n" "$cpu_events_single"
-  printf "Disk Write: %s MB/s (Target: %s)\n" "$disk_write_buffered_mb_s" "$DISK_DIR"
-  printf "Net Down:   %s Mbps\n" "$network_download_mbps"
 
+  # --------------------------------------------------------------------------
+  # FINAL RESULTS SUMMARY (Formatted)
+  # --------------------------------------------------------------------------
+  log_summary_header "FINAL RESULTS SUMMARY"
+
+  printf "\n%sExecution Details:%s\n" "$BLUE" "$NC"
+  printf "  %-20s: %s\n" "Hostname" "$(hostname)"
+  printf "  %-20s: %s\n" "Timestamp" "$_ts"
+  printf "  %-20s: %s%s%s\n" "Status" "$GREEN" "Completed" "$NC"
+
+  printf "\n%sCPU Performance (sysbench):%s\n" "$CYAN" "$NC"
+  _s_cpu_s=$(get_status_indicator "$cpu_events_single")
+  _s_cpu_m=$(get_status_indicator "$cpu_events_multi")
+  printf "  %-20s [%s]: %s%s%s events/sec\n" "Single-Thread" "$_s_cpu_s" "$GREEN" "$cpu_events_single" "$NC"
+  printf "  %-20s [%s]: %s%s%s events/sec\n" "Multi-Thread" "$_s_cpu_m" "$GREEN" "$cpu_events_multi" "$NC"
+
+  printf "\n%sDisk Performance (dd 1GiB):%s\n" "$CYAN" "$NC"
+  printf "  %-20s: %s\n" "Test Path" "$DISK_DIR"
+  _s_dwb=$(get_status_indicator "$disk_write_buffered_mb_s")
+  _s_dwd=$(get_status_indicator "$disk_write_direct_mb_s")
+  _s_dr=$(get_status_indicator "$disk_read_mb_s")
+  printf "  %-20s [%s]: %s%s%s MB/s\n" "Write (Buffered)" "$_s_dwb" "$GREEN" "$disk_write_buffered_mb_s" "$NC"
+  printf "  %-20s [%s]: %s%s%s MB/s\n" "Write (Direct)" "$_s_dwd" "$GREEN" "$disk_write_direct_mb_s" "$NC"
+  printf "  %-20s [%s]: %s%s%s MB/s\n" "Read (Direct)" "$_s_dr" "$GREEN" "$disk_read_mb_s" "$NC"
+
+  printf "\n%sNetwork Performance (speedtest):%s\n" "$CYAN" "$NC"
+  _s_nd=$(get_status_indicator "$network_download_mbps")
+  _s_nu=$(get_status_indicator "$network_upload_mbps")
+  _s_np=$(get_status_indicator "$network_ping_ms")
+  printf "  %-20s [%s]: %s%s%s Mbps\n" "Download" "$_s_nd" "$GREEN" "$network_download_mbps" "$NC"
+  printf "  %-20s [%s]: %s%s%s Mbps\n" "Upload" "$_s_nu" "$GREEN" "$network_upload_mbps" "$NC"
+  printf "  %-20s [%s]: %s%s%s ms\n" "Latency" "$_s_np" "$GREEN" "$network_ping_ms" "$NC"
+
+  # --------------------------------------------------------------------------
+  # DB Operations
+  # --------------------------------------------------------------------------
   if [ "$OPT_SAVE" -eq 1 ]; then
     init_database
     save_to_database "$_ts_iso" "$(hostname)"
