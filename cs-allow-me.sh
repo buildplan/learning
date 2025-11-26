@@ -35,7 +35,7 @@ SSH_PORT="22"                 # Default 22, or set custom port (e.g. "5555")
 SSH_KEY=""                    # Leave empty for default or e.g.: "$HOME/.ssh/my_custom_key"
 
 
-# MUST be a dedicated list for this script
+The script will CREATE this list if it does not exist.
 ALLOWLIST_NAME="home_dynamic_ips"
 
 DESC_V4="home dynamic IPv4"
@@ -67,7 +67,6 @@ ntfy_send() {
 get_public_ipv4() {
     _IP=$(curl -4 -s https://ip.me 2>/dev/null || curl -4 -s https://api.ipify.org 2>/dev/null)
     _IP=$(printf '%s\n' "$_IP" | tr -d '[:space:]')
-    # Validate format
     case "$_IP" in
         *.*.*.*) printf '%s\n' "$_IP" ;;
         *) printf '' ;;
@@ -85,7 +84,7 @@ get_public_ipv6() {
 
 # --- Main Execution ---
 
-# Get Local IPs
+# 1. Get Local IPs
 CURRENT_IPv4=$(get_public_ipv4)
 
 if [ -z "$CURRENT_IPv4" ]; then
@@ -98,18 +97,22 @@ if [ "$HANDLE_IPV6" = "yes" ]; then
     CURRENT_IPv6=$(get_public_ipv6)
 fi
 
-# Build SSH Command Prefix
+# 2. Build SSH Command Prefix
 SSH_CMD="ssh -q -o BatchMode=yes -o ConnectTimeout=10 -p ${SSH_PORT}"
 if [ -n "$SSH_KEY" ]; then
     SSH_CMD="$SSH_CMD -i $SSH_KEY"
 fi
 SSH_CMD="$SSH_CMD ${SSH_USER}@${VPS_HOST}"
 
-# Fetch Remote List
-REMOTE_OUTPUT=$($SSH_CMD "docker exec crowdsec cscli allowlists inspect ${ALLOWLIST_NAME} -o human 2>/dev/null" || printf '')
+# 3. Fetch Remote List (With Auto-Creation)
+REMOTE_CMD="docker exec crowdsec cscli allowlists inspect ${ALLOWLIST_NAME} -o human 2>/dev/null || docker exec crowdsec cscli allowlists create ${ALLOWLIST_NAME}"
+
+REMOTE_OUTPUT=$($SSH_CMD "$REMOTE_CMD" || printf '')
+
+# Parse IPs (grep ensures we only grab IP-looking lines, ignoring 'List created' messages)
 REMOTE_IPS=$(printf '%s\n' "$REMOTE_OUTPUT" | grep -E '^[0-9a-fA-F:.]' | awk '{print $1}')
 
-# Logic Calculation
+# 4. Logic Calculation
 NEEDS_UPDATE="no"
 COMMAND_BATCH=""
 REMOVED_LOG=""
@@ -123,7 +126,6 @@ for r_ip in $REMOTE_IPS; do
 
     if [ "$is_valid" = "no" ]; then
         NEEDS_UPDATE="yes"
-        # Append removal command
         COMMAND_BATCH="${COMMAND_BATCH} docker exec crowdsec cscli allowlists remove ${ALLOWLIST_NAME} ${r_ip};"
         REMOVED_LOG="${REMOVED_LOG} ${r_ip}"
     fi
@@ -145,9 +147,10 @@ if [ "$HANDLE_IPV6" = "yes" ] && [ -n "$CURRENT_IPv6" ]; then
     fi
 fi
 
-# Execute Update (if needed)
+# 5. Execute Update (if needed)
 if [ "$NEEDS_UPDATE" = "yes" ]; then
 
+    # Run the batch command in ONE SSH connection
     if $SSH_CMD "$COMMAND_BATCH"; then
         MSG="CrowdSec Updated."
         [ -n "$ADDED_LOG" ] && MSG="$MSG Added: $ADDED_LOG."
