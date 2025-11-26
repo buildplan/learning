@@ -34,9 +34,8 @@ SSH_USER="admin"              # SSH user
 SSH_PORT="22"                 # Default 22, or set custom port (e.g. "5555")
 SSH_KEY=""                    # Leave empty for default or e.g.: "$HOME/.ssh/my_custom_key"
 
-
-The script will CREATE this list if it does not exist.
-ALLOWLIST_NAME="home_dynamic_ips"
+ALLOWLIST_NAME="home_dynamic_ips"            # The script will CREATE this list if it does not exist.
+LIST_DESCRIPTION="Auto-created home IP list" # NOTE: Do NOT use single quotes (') in this description string.
 
 DESC_V4="home dynamic IPv4"
 DESC_V6="home dynamic IPv6"
@@ -55,6 +54,7 @@ ntfy_send() {
     _TITLE="$1"
     _MSG="$2"
     [ "$NTFY_ENABLED" = "yes" ] || return 0
+    # Check if curl exists
     if command -v curl >/dev/null 2>&1; then
         curl -s -X POST \
             -H "Authorization: Bearer $NTFY_TOKEN" \
@@ -105,11 +105,12 @@ fi
 SSH_CMD="$SSH_CMD ${SSH_USER}@${VPS_HOST}"
 
 # 3. Fetch Remote List (With Auto-Creation)
-REMOTE_CMD="docker exec crowdsec cscli allowlists inspect ${ALLOWLIST_NAME} -o human 2>/dev/null || docker exec crowdsec cscli allowlists create ${ALLOWLIST_NAME}"
+REMOTE_CMD="docker exec crowdsec cscli allowlists inspect ${ALLOWLIST_NAME} -o human 2>/dev/null \
+|| docker exec crowdsec cscli allowlists create ${ALLOWLIST_NAME} -d '${LIST_DESCRIPTION}'"
 
 REMOTE_OUTPUT=$($SSH_CMD "$REMOTE_CMD" || printf '')
 
-# Parse IPs (grep ensures we only grab IP-looking lines, ignoring 'List created' messages)
+# Parse IPs
 REMOTE_IPS=$(printf '%s\n' "$REMOTE_OUTPUT" | grep -E '^[0-9a-fA-F:.]' | awk '{print $1}')
 
 # 4. Logic Calculation
