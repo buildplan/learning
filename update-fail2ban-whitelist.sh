@@ -1,18 +1,17 @@
 #!/bin/sh
 
 # --- Config ---
-
 # SSH target (use Host from ~/.ssh/config)
-VPS_HOST="forgejo_vps_host"    # e.g. Host alias in ~/.ssh/config
-VPS_USER="username"
+VPS_HOST="vps_host"              # e.g. Host alias in ~/.ssh/config
+VPS_USER="vps_user_name"
 SSH_KEY="$HOME/.ssh/id_ed25519"  # or empty to use default key
-JAIL_NAME="forgejo-sshd"
+JAIL_NAME="DEFAULT"
 
 # ntfy configuration (all optional)
 NTFY_ENABLED=1
 NTFY_SERVER="https://ntfy.sh"    # or your self-hosted server
 NTFY_TOPIC="your-topic"
-NTFY_TOKEN=""                    # set to tk_... for Bearer auth
+NTFY_TOKEN=""                    # Bearer token set to tk_... for Bearer auth
 
 # Local state
 STATE_DIR="$HOME/.config/fail2ban-whitelist"
@@ -20,7 +19,6 @@ STATE_FILE="$STATE_DIR/ip.state"
 LOG_FILE="$STATE_DIR/update.log"
 
 # --- Helpers ---
-
 log() {
     printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$1" >> "$LOG_FILE"
 }
@@ -92,7 +90,6 @@ send_ntfy() {
 }
 
 # --- Main ---
-
 mkdir -p "$STATE_DIR"
 
 CURRENT_IPV4=""
