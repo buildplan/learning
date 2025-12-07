@@ -307,41 +307,45 @@ LISTP
   log_summary_header "COMPARISON WITH PREVIOUS RUN"
   printf "%sPrevious Run:%s %s (v%s)\n" "$BLUE" "$NC" "$prev_timestamp" "${prev_version:-1.0.0}"
 
-  compare_metric() {
-    local name="$1"
-    local current="$2"
-    local previous="$3"
-    local higher_is_better="${4:-1}"
+compare_metric() {
+  local name="$1"
+  local current="$2"
+  local previous="$3"
+  local higher_is_better="${4:-1}"
 
-    if [ "$current" = "N/A" ] || [ -z "$previous" ] || [ "$previous" = "NULL" ]; then
-      printf "  %-25s: %s (no comparison)\n" "$name" "$current"
-      return
-    fi
-
-    local diff abs_diff
-    diff=$(echo "scale=2; (($current - $previous) / $previous) * 100" | bc)
-    abs_diff=$(echo "$diff" | tr -d '-')
-
-    local is_improvement=0
-    if (( $(echo "$diff > 0" | bc -l) )); then
-      [ "$higher_is_better" -eq 1 ] && is_improvement=1
+  if [ "$current" = "N/A" ] || [ -z "$previous" ] || [ "$previous" = "NULL" ]; then
+    if [ "$current" = "N/A" ]; then
+      printf "  %-25s: %s\n" "$name" "N/A"
     else
-      [ "$higher_is_better" -eq 0 ] && is_improvement=1
+      printf "  %-25s: %s → %s %s(new)%s\n" "$name" "N/A" "$current" "$BLUE" "$NC"
     fi
+    return
+  fi
 
-    local color=$RED
-    local symbol="▼"
-    if [ "$is_improvement" -eq 1 ]; then
-      color=$GREEN
-      symbol="▲"
-    elif (( $(echo "$abs_diff < 2" | bc -l) )); then
-      color=$NC
-      symbol="≈"
-    fi
+  local diff abs_diff
+  diff=$(echo "scale=2; (($current - $previous) / $previous) * 100" | bc)
+  abs_diff=$(echo "$diff" | tr -d '-')
 
-    printf "  %-25s: %s → %s %s(%s%.1f%%)%s\n" \
-           "$name" "$previous" "$current" "$color" "$symbol" "$abs_diff" "$NC"
-  }
+  local is_improvement=0
+  if (( $(echo "$diff > 0" | bc -l) )); then
+    [ "$higher_is_better" -eq 1 ] && is_improvement=1
+  else
+    [ "$higher_is_better" -eq 0 ] && is_improvement=1
+  fi
+
+  local color=$RED
+  local symbol="▼"
+  if [ "$is_improvement" -eq 1 ]; then
+    color=$GREEN
+    symbol="▲"
+  elif (( $(echo "$abs_diff < 2" | bc -l) )); then
+    color=$NC
+    symbol="≈"
+  fi
+
+  printf "  %-25s: %s → %s %s(%s%.1f%%)%s\n" \
+         "$name" "$previous" "$current" "$color" "$symbol" "$abs_diff" "$NC"
+}
 
   printf "\n%sCPU Performance:%s\n" "$CYAN" "$NC"
   compare_metric "Single-Thread (ev/s)" "$cpu_events_single" "$prev_cpu_s" 1
