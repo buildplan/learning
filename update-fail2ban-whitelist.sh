@@ -1,38 +1,85 @@
 #!/bin/sh
 # shellcheck shell=sh
+#
+# ==============================================================================
+# FAIL2BAN DYNAMIC WHITELIST UPDATER | update-fail2ban-whitelist.sh
+# ==============================================================================
+#
+# PURPOSE:
+#   Updates Fail2ban 'ignoreip' on a remote VPS with your current dynamic IP.
+#   It updates the running process (memory), not the configuration file (disk).
+#
+# SETUP INSTRUCTIONS:
+#   1. ON REMOTE SERVER (VPS):
+#      Run: sudo visudo
+#      Add this line (replace 'your_user' with the actual username used below):
+#      your_user ALL=(root) NOPASSWD: /usr/bin/fail2ban-client
+#
+#   2. ON LOCAL MACHINE:
+#      Ensure you have 'curl' installed.
+#      Configure SSH Key authentication (passwordless login) to the VPS.
+#
+# USAGE:
+#   ./update-fail2ban-whitelist.sh
+#
+# VERIFICATION:
+#   Do NOT check /etc/fail2ban/jail.local (it will not change).
+#   Run this on the VPS to see the active whitelist in memory:
+#      sudo fail2ban-client get sshd ignoreip
+#
+# FORCE UPDATE:
+#   To force the script to run even if your IP hasn't changed:
+#      rm ~/.config/fail2ban-whitelist/ip.state
+#
+# ==============================================================================
 
-# --- Config ---
-VPS_HOST="vps_host"
-VPS_USER="vps_user_name"
+set -u # Exit if variables are undefined
+
+# --- Configuration ---
+VPS_HOST="vps_host"  # vps hostname from ~/.ssh/config
+VPS_USER="user_name"
 SSH_KEY="$HOME/.ssh/id_ed25519"
-JAIL_NAME="DEFAULT"
 
-NTFY_ENABLED=1
+# List your active jails here, space separated.
+# e.g. "sshd ufw-probes nginx-http-auth"
+JAILS="sshd"
+
+# Config for Notifications
+NTFY_ENABLED=0
 NTFY_SERVER="https://ntfy.sh"
 NTFY_TOPIC="your-topic"
-NTFY_TOKEN=""  # Bearer token: tk_...
+NTFY_TOKEN=""  # Bearer token if required
 
+# Local State Storage
 STATE_DIR="$HOME/.config/fail2ban-whitelist"
 STATE_FILE="$STATE_DIR/ip.state"
 LOG_FILE="$STATE_DIR/update.log"
 
+# Remote commands (Must match sudoers NOPASSWD path exactly)
+FAIL2BAN_CMD="/usr/bin/fail2ban-client"
+
 # --- Helpers ---
+
 log() {
+    # Appends timestamped message to log
     printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$1" >> "$LOG_FILE"
 }
 
 get_ipv4() {
+    # Tries multiple services to get IPv4
     for url in \
-        "https://ip.me" \
-        "https://ifconfig.me" \
+        "https://api.ipify.org" \
+        "https://ifconfig.me/ip" \
         "https://icanhazip.com" \
-        "https://api.ipify.org"
+        "https://ip.me"
     do
-        ipv4=$(curl -4 -s --max-time 5 "$url" 2>/dev/null)
+        # curl: -4 force ipv4, -s silent, -m 5 max time
+        ipv4=$(curl -4 -s -m 5 "$url" 2>/dev/null)
+
+        # Simple validation: checks for 3 dots and numbers
         case "$ipv4" in
-            '' ) ;;
-            *.*.*.* )
-                printf '%s\n' "$ipv4"
+            *[0-9].*[0-9].*[0-9].*[0-9])
+                printf '%s' "$ipv4"
                 return 0
                 ;;
         esac
@@ -41,97 +88,127 @@ get_ipv4() {
 }
 
 get_ipv6() {
-    ipv6=$(curl -6 -s --max-time 5 "https://ifconfig.co" 2>/dev/null)
-    if [ -n "$ipv6" ]; then
-        printf '%s\n' "$ipv6"
-        return 0
-    fi
+    # Tries to get IPv6
+    ipv6=$(curl -6 -s -m 5 "https://ifconfig.co" 2>/dev/null)
+    # Validate it contains a colon
+    case "$ipv6" in
+        *:*)
+            printf '%s' "$ipv6"
+            return 0
+            ;;
+    esac
     return 1
 }
 
 send_ntfy() {
-    message=$1
-    priority=${2:-3}
+    message="$1"
+    priority="${2:-3}"
 
     if [ "$NTFY_ENABLED" != "1" ] || [ -z "$NTFY_SERVER" ] || [ -z "$NTFY_TOPIC" ]; then
         return 0
     fi
 
     url="$NTFY_SERVER/$NTFY_TOPIC"
+    title="Fail2ban Whitelist"
 
+    # Construct headers
     if [ -n "$NTFY_TOKEN" ]; then
         curl -s \
             -H "Authorization: Bearer $NTFY_TOKEN" \
-            -H "Title: Fail2ban whitelist" \
+            -H "Title: $title" \
             -H "X-Priority: $priority" \
             -d "$message" \
             "$url" >/dev/null 2>&1
     else
         curl -s \
-            -H "Title: Fail2ban whitelist" \
+            -H "Title: $title" \
             -H "X-Priority: $priority" \
             -d "$message" \
             "$url" >/dev/null 2>&1
     fi
 }
 
-# --- Main ---
+# --- Main Logic ---
+
 mkdir -p "$STATE_DIR"
 
-# Simplify IP detection
-CURRENT_IPV4=$(get_ipv4 || true)
-CURRENT_IPV6=$(get_ipv6 || true)
+# 1. Detect IPs
+CURRENT_IPV4=$(get_ipv4) || CURRENT_IPV4=""
+CURRENT_IPV6=$(get_ipv6) || CURRENT_IPV6=""
 
 if [ -z "$CURRENT_IPV4" ] && [ -z "$CURRENT_IPV6" ]; then
-    log "ERROR: could not detect any public IP"
-    send_ntfy "❌ Fail2ban whitelist: could not detect any public IP" "5"
+    log "ERROR: Could not detect any public IP."
+    send_ntfy "❌ Fail2ban: Could not detect any public IP" "5"
     exit 1
 fi
 
-# Read old IPs
+# 2. Read Previous State
 OLD_IPV4=""
 OLD_IPV6=""
 if [ -f "$STATE_FILE" ]; then
-    OLD_IPV4=$(cut -d' ' -f1 "$STATE_FILE" 2>/dev/null)
-    OLD_IPV6=$(cut -d' ' -f2 "$STATE_FILE" 2>/dev/null)
+    # Read first line, safely split by space
+    read -r line < "$STATE_FILE" 2>/dev/null || line=""
+    OLD_IPV4=$(printf '%s' "$line" | cut -d' ' -f1)
+    OLD_IPV6=$(printf '%s' "$line" | cut -d' ' -f2)
 fi
 
-# Check if unchanged
+# 3. Compare State
 if [ "$CURRENT_IPV4" = "$OLD_IPV4" ] && [ "$CURRENT_IPV6" = "$OLD_IPV6" ]; then
-    log "IP unchanged: v4=$CURRENT_IPV4 v6=$CURRENT_IPV6"
+    log "IP unchanged. v4:$CURRENT_IPV4 v6:$CURRENT_IPV6"
     exit 0
 fi
 
-# Build remote commands safely
-remote_cmd=""
-[ -n "$OLD_IPV4" ] && [ "$OLD_IPV4" != "$CURRENT_IPV4" ] && \
-    remote_cmd="${remote_cmd}sudo fail2ban-client set $JAIL_NAME delignoreip $OLD_IPV4 2>/dev/null || true; "
-[ -n "$CURRENT_IPV4" ] && \
-    remote_cmd="${remote_cmd}sudo fail2ban-client set $JAIL_NAME addignoreip $CURRENT_IPV4; "
-[ -n "$OLD_IPV6" ] && [ "$OLD_IPV6" != "$CURRENT_IPV6" ] && \
-    remote_cmd="${remote_cmd}sudo fail2ban-client set $JAIL_NAME delignoreip $OLD_IPV6 2>/dev/null || true; "
-[ -n "$CURRENT_IPV6" ] && \
-    remote_cmd="${remote_cmd}sudo fail2ban-client set $JAIL_NAME addignoreip $CURRENT_IPV6; "
+# 4. Build Remote Command
 
-if [ -z "$remote_cmd" ]; then
-    log "Nothing to update on server"
+remote_script=""
+
+for jail in $JAILS; do
+    # Remove OLD IPv4
+    if [ -n "$OLD_IPV4" ] && [ "$OLD_IPV4" != "$CURRENT_IPV4" ]; then
+        remote_script="${remote_script} sudo $FAIL2BAN_CMD set $jail delignoreip $OLD_IPV4 >/dev/null 2>&1 || true;"
+    fi
+    # Add NEW IPv4
+    if [ -n "$CURRENT_IPV4" ]; then
+        remote_script="${remote_script} sudo $FAIL2BAN_CMD set $jail addignoreip $CURRENT_IPV4 >/dev/null 2>&1;"
+    fi
+
+    # Remove OLD IPv6
+    if [ -n "$OLD_IPV6" ] && [ "$OLD_IPV6" != "$CURRENT_IPV6" ]; then
+        remote_script="${remote_script} sudo $FAIL2BAN_CMD set $jail delignoreip $OLD_IPV6 >/dev/null 2>&1 || true;"
+    fi
+    # Add NEW IPv6
+    if [ -n "$CURRENT_IPV6" ]; then
+        remote_script="${remote_script} sudo $FAIL2BAN_CMD set $jail addignoreip $CURRENT_IPV6 >/dev/null 2>&1;"
+    fi
+done
+
+if [ -z "$remote_script" ]; then
+    log "No remote commands needed."
     exit 0
 fi
 
-# SSH options handling
-SSH_CMD="ssh"
+# 5. Execute via SSH
+SSH_OPTS="-o ConnectTimeout=10 -o BatchMode=yes"
 if [ -n "$SSH_KEY" ] && [ -f "$SSH_KEY" ]; then
-    SSH_CMD="ssh -i $SSH_KEY"
+    SSH_OPTS="$SSH_OPTS -i $SSH_KEY"
 fi
 
-# Execute remote update
-if $SSH_CMD "$VPS_USER@$VPS_HOST" "$remote_cmd"; then
-    log "Updated fail2ban ignoreip: old v4=$OLD_IPV4 v6=$OLD_IPV6; new v4=$CURRENT_IPV4 v6=$CURRENT_IPV6"
+# shellcheck disable=SC2086,SC2029
+if ssh $SSH_OPTS "$VPS_USER@$VPS_HOST" "sh -c '$remote_script'"; then
+    log "SUCCESS: Updated $JAILS. Old: $OLD_IPV4|$OLD_IPV6 -> New: $CURRENT_IPV4|$CURRENT_IPV6"
+
+    # Save new state
     printf '%s %s\n' "$CURRENT_IPV4" "$CURRENT_IPV6" > "$STATE_FILE"
-    send_ntfy "✅ Whitelist updated\nOld v4: ${OLD_IPV4:-none}\nNew v4: ${CURRENT_IPV4:-none}\nOld v6: ${OLD_IPV6:-none}\nNew v6: ${CURRENT_IPV6:-none}" "4"
+
+    send_ntfy "✅ Whitelist Updated
+    Jails: $JAILS
+    Old v4: ${OLD_IPV4:-None}
+    New v4: ${CURRENT_IPV4:-None}
+    Old v6: ${OLD_IPV6:-None}
+    New v6: ${CURRENT_IPV6:-None}" "3"
     exit 0
 else
-    log "ERROR: SSH to $VPS_HOST failed"
-    send_ntfy "❌ Fail2ban whitelist: SSH to $VPS_HOST failed" "5"
+    log "ERROR: SSH connection or remote execution failed."
+    send_ntfy "❌ Fail2ban: SSH update failed for $VPS_HOST" "5"
     exit 1
 fi
