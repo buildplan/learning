@@ -8,19 +8,27 @@
 # PURPOSE:
 #   Updates Fail2ban 'ignoreip' on a remote VPS with your current dynamic IP.
 #   It updates the running process (memory), not the configuration file (disk).
+#   Changes are lost on server reboot (which is safest for dynamic IPs).
 #
-# SETUP INSTRUCTIONS:
-#   1. ON REMOTE SERVER (VPS):
-#      Run: sudo visudo
-#      Add this line (replace 'your_user' with the actual username used below):
+# SETUP INSTRUCTIONS (REMOTE VPS):
+#   1. SSH into the server and find the correct path:
+#      which fail2ban-client
+#      (Update the script variable FAIL2BAN_CMD if it is not /usr/bin/fail2ban-client)
+#
+#   2. Edit permissions:
+#      sudo visudo
+#
+#   3. Add the following lines at the VERY BOTTOM of the file.
+#      (Putting them at the bottom ensures they are not overridden by group rules).
+#      Replace 'your_user' with the actual username used in the script.
+#
+#      Defaults:your_user !requiretty
 #      your_user ALL=(root) NOPASSWD: /usr/bin/fail2ban-client
 #
-#   2. ON LOCAL MACHINE:
-#      Ensure you have 'curl' installed.
-#      Configure SSH Key authentication (passwordless login) to the VPS.
-#
-# USAGE:
-#   ./update-fail2ban-whitelist.sh
+# SETUP INSTRUCTIONS (LOCAL MACHINE):
+#   1. Ensure 'curl' is installed.
+#   2. Setup SSH Key authentication (passwordless login) to the VPS.
+#   3. Add this script to a Cron job or LaunchAgent to run hourly.
 #
 # VERIFICATION:
 #   Do NOT check /etc/fail2ban/jail.local (it will not change).
@@ -36,19 +44,19 @@
 set -u # Exit if variables are undefined
 
 # --- Configuration ---
-VPS_HOST="vps_host"  # vps hostname from ~/.ssh/config
-VPS_USER="user_name"
-SSH_KEY="$HOME/.ssh/id_ed25519"
+VPS_HOST="name_or_ip"           # Hostname OR IP address
+VPS_PORT="22"                   # Custom SSH port (default is 22)
+VPS_USER="vps_user"             # VPS User
+SSH_KEY="$HOME/.ssh/id_ed25519" # Key for SSH
 
 # List your active jails here, space separated.
-# e.g. "sshd ufw-probes nginx-http-auth"
-JAILS="sshd"
+JAILS="sshd ufw-probes"
 
 # Config for Notifications
-NTFY_ENABLED=0
+NTFY_ENABLED=1
 NTFY_SERVER="https://ntfy.sh"
-NTFY_TOPIC="your-topic"
-NTFY_TOKEN=""  # Bearer token if required
+NTFY_TOPIC="topic"
+NTFY_TOKEN="tk_xxxxxxxxx"
 
 # Local State Storage
 STATE_DIR="$HOME/.config/fail2ban-whitelist"
@@ -61,22 +69,17 @@ FAIL2BAN_CMD="/usr/bin/fail2ban-client"
 # --- Helpers ---
 
 log() {
-    # Appends timestamped message to log
     printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$1" >> "$LOG_FILE"
 }
 
 get_ipv4() {
-    # Tries multiple services to get IPv4
     for url in \
         "https://api.ipify.org" \
         "https://ifconfig.me/ip" \
         "https://icanhazip.com" \
         "https://ip.me"
     do
-        # curl: -4 force ipv4, -s silent, -m 5 max time
         ipv4=$(curl -4 -s -m 5 "$url" 2>/dev/null)
-
-        # Simple validation: checks for 3 dots and numbers
         case "$ipv4" in
             *[0-9].*[0-9].*[0-9].*[0-9])
                 printf '%s' "$ipv4"
@@ -88,9 +91,7 @@ get_ipv4() {
 }
 
 get_ipv6() {
-    # Tries to get IPv6
     ipv6=$(curl -6 -s -m 5 "https://ifconfig.co" 2>/dev/null)
-    # Validate it contains a colon
     case "$ipv6" in
         *:*)
             printf '%s' "$ipv6"
@@ -111,7 +112,6 @@ send_ntfy() {
     url="$NTFY_SERVER/$NTFY_TOPIC"
     title="Fail2ban Whitelist"
 
-    # Construct headers
     if [ -n "$NTFY_TOKEN" ]; then
         curl -s \
             -H "Authorization: Bearer $NTFY_TOKEN" \
@@ -146,7 +146,6 @@ fi
 OLD_IPV4=""
 OLD_IPV6=""
 if [ -f "$STATE_FILE" ]; then
-    # Read first line, safely split by space
     read -r line < "$STATE_FILE" 2>/dev/null || line=""
     OLD_IPV4=$(printf '%s' "$line" | cut -d' ' -f1)
     OLD_IPV6=$(printf '%s' "$line" | cut -d' ' -f2)
@@ -159,26 +158,21 @@ if [ "$CURRENT_IPV4" = "$OLD_IPV4" ] && [ "$CURRENT_IPV6" = "$OLD_IPV6" ]; then
 fi
 
 # 4. Build Remote Command
-
 remote_script=""
 
 for jail in $JAILS; do
-    # Remove OLD IPv4
     if [ -n "$OLD_IPV4" ] && [ "$OLD_IPV4" != "$CURRENT_IPV4" ]; then
-        remote_script="${remote_script} sudo $FAIL2BAN_CMD set $jail delignoreip $OLD_IPV4 >/dev/null 2>&1 || true;"
+        remote_script="${remote_script} sudo $FAIL2BAN_CMD set $jail delignoreip $OLD_IPV4 || true;"
     fi
-    # Add NEW IPv4
     if [ -n "$CURRENT_IPV4" ]; then
-        remote_script="${remote_script} sudo $FAIL2BAN_CMD set $jail addignoreip $CURRENT_IPV4 >/dev/null 2>&1;"
+        remote_script="${remote_script} sudo $FAIL2BAN_CMD set $jail addignoreip $CURRENT_IPV4;"
     fi
 
-    # Remove OLD IPv6
     if [ -n "$OLD_IPV6" ] && [ "$OLD_IPV6" != "$CURRENT_IPV6" ]; then
-        remote_script="${remote_script} sudo $FAIL2BAN_CMD set $jail delignoreip $OLD_IPV6 >/dev/null 2>&1 || true;"
+        remote_script="${remote_script} sudo $FAIL2BAN_CMD set $jail delignoreip $OLD_IPV6 || true;"
     fi
-    # Add NEW IPv6
     if [ -n "$CURRENT_IPV6" ]; then
-        remote_script="${remote_script} sudo $FAIL2BAN_CMD set $jail addignoreip $CURRENT_IPV6 >/dev/null 2>&1;"
+        remote_script="${remote_script} sudo $FAIL2BAN_CMD set $jail addignoreip $CURRENT_IPV6;"
     fi
 done
 
@@ -188,19 +182,22 @@ if [ -z "$remote_script" ]; then
 fi
 
 # 5. Execute via SSH
-SSH_OPTS="-o ConnectTimeout=10 -o BatchMode=yes"
+SSH_OPTS="-q -o ConnectTimeout=10 -o BatchMode=yes"
+
 if [ -n "$SSH_KEY" ] && [ -f "$SSH_KEY" ]; then
     SSH_OPTS="$SSH_OPTS -i $SSH_KEY"
+fi
+if [ -n "$VPS_PORT" ]; then
+    SSH_OPTS="$SSH_OPTS -p $VPS_PORT"
 fi
 
 # shellcheck disable=SC2086,SC2029
 if ssh $SSH_OPTS "$VPS_USER@$VPS_HOST" "sh -c '$remote_script'"; then
     log "SUCCESS: Updated $JAILS. Old: $OLD_IPV4|$OLD_IPV6 -> New: $CURRENT_IPV4|$CURRENT_IPV6"
-
-    # Save new state
     printf '%s %s\n' "$CURRENT_IPV4" "$CURRENT_IPV6" > "$STATE_FILE"
 
     send_ntfy "✅ Whitelist Updated
+    Target: $VPS_HOST:$VPS_PORT
     Jails: $JAILS
     Old v4: ${OLD_IPV4:-None}
     New v4: ${CURRENT_IPV4:-None}
@@ -209,6 +206,6 @@ if ssh $SSH_OPTS "$VPS_USER@$VPS_HOST" "sh -c '$remote_script'"; then
     exit 0
 else
     log "ERROR: SSH connection or remote execution failed."
-    send_ntfy "❌ Fail2ban: SSH update failed for $VPS_HOST" "5"
+    send_ntfy "❌ Fail2ban: SSH update failed for $VPS_HOST:$VPS_PORT" "5"
     exit 1
 fi
