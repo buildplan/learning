@@ -878,7 +878,7 @@ main() {
 
   # Send notification
   if [ "$NTFY_ENABLED" -eq 1 ]; then
-    local summary="$(hostname): CPU ${cpu_events_multi}ev/s | Disk ${disk_write_buffered_mb_s}MB/s | Net ${network_download_mbps}↓/${network_upload_mbps}↑ Mbps"
+    local summary="$(hostname): CPU ${cpu_events_multi}ev/s | Disk ${disk_write_buffered_mb_s}MB/s | Net ${network_download_mbps:-N/A}↓/${network_upload_mbps:-N/A}↑ Mbps"
     send_ntfy_notification "VPS Benchmark Complete" "$summary" "default"
   fi
 
