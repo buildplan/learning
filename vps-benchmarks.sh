@@ -689,7 +689,17 @@ run_disk_latency_benchmark() {
   local ioping_out
   ioping_out=$(ioping -c 20 "${SCRIPT_DIR}" 2>&1)
   echo "$ioping_out"
-  disk_latency_us=$(echo "$ioping_out" | awk '/min\/avg\/max/ {gsub(/us/,""); print $4}')
+
+  local latency_value latency_unit
+  latency_value=$(echo "$ioping_out" | awk '/min\/avg\/max/ {print $6; exit}')
+  latency_unit=$(echo "$ioping_out" | awk '/min\/avg\/max/ {print $7; exit}')
+
+  if [ "$latency_unit" = "ms" ]; then
+    disk_latency_us=$(echo "$latency_value * 1000" | bc | cut -d'.' -f1)
+  else
+    disk_latency_us=$(echo "$latency_value" | cut -d'.' -f1)
+  fi
+
   [ -z "$disk_latency_us" ] && disk_latency_us="N/A"
   log_to_file "INFO" "Disk latency: $disk_latency_us μs"
 }
