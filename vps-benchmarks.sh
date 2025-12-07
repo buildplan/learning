@@ -466,7 +466,7 @@ check_system_health() {
 # ============================================================================
 
 verify_all_dependencies() {
-  for tool in sysbench bc sqlite3 curl; do
+  for tool in sysbench bc sqlite3 curl ioping; do
     command -v "$tool" &>/dev/null || return 1
   done
   command -v speedtest &>/dev/null || command -v speedtest-cli &>/dev/null || return 1
@@ -489,7 +489,7 @@ check_and_install_dependencies() {
   local missing_deps=0
 
   # Check core tools
-  for tool in sysbench bc sqlite3 curl; do
+  for tool in sysbench bc sqlite3 curl ioping; do
     if ! command -v "$tool" &>/dev/null; then
       missing_deps=1
       break
