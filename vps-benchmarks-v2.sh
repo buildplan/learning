@@ -652,7 +652,7 @@ run_memory_benchmark() {
   local mem_out
   mem_out=$(sysbench memory --memory-block-size=1M --memory-total-size=10G --time="${CPU_TEST_TIME}" run)
   echo "$mem_out" | grep 'transferred'
-  memory_mib_s=$(echo "$mem_out" | awk '/transferred/ {print $4; exit}')
+  memory_mib_s=$(echo "$mem_out" | awk '/transferred/ {gsub(/[()]/, "", $4); print $4; exit}')
   [ -z "$memory_mib_s" ] && memory_mib_s="N/A"
   log_to_file "INFO" "Memory bandwidth: $memory_mib_s MiB/s"
 }
@@ -702,19 +702,23 @@ run_network_benchmark() {
 
   log_section "Network Speed Test (${INSTALL_SPEEDTEST_CLI})"
   local out
+  local exit_code=0
 
   if command -v speedtest &>/dev/null; then
-    out=$(timeout 300 speedtest --accept-license --accept-gdpr 2>&1) || {
-      printf "%s\n" "$out"
-      printf "%sWarning: Network speed test failed%s\n" "$YELLOW" "$NC"
-      log_to_file "WARN" "Network speed test failed"
-      return 1
-    }
+    out=$(timeout 300 speedtest --accept-license --accept-gdpr 2>&1) || exit_code=$?
     printf "%s\n" "$out"
+
+    if [ $exit_code -ne 0 ]; then
+      printf "%sWarning: Ookla speedtest exited with code %s (upload may have failed)%s\n" \
+             "$YELLOW" "$exit_code" "$NC"
+      log_to_file "WARN" "Ookla speedtest exited with code $exit_code"
+    fi
 
     extract_first_number() {
       local pattern="$1"
-      echo "$out" | awk -v pat="$pattern" '$0 ~ pat { for(i=1;i<=NF;i++) if($i ~ /^[0-9]+(\.[0-9]+)?$/) {print $i; exit} }' | head -n1
+      echo "$out" | awk -v pat="$pattern" \
+        '$0 ~ pat { for(i=1;i<=NF;i++) if($i ~ /^[0-9]+(\.[0-9]+)?$/) {print $i; exit} }' \
+        | head -n1
     }
 
     network_download_mbps=$(extract_first_number "^[[:space:]]*Download:")
@@ -723,15 +727,20 @@ run_network_benchmark() {
     [ -z "$network_ping_ms" ] && network_ping_ms=$(extract_first_number "^[[:space:]]*Latency:")
 
   elif command -v speedtest-cli &>/dev/null; then
-    out=$(timeout 300 speedtest-cli --simple 2>&1) || {
-      log_to_file "WARN" "Network speed test failed"
-      return 1
-    }
+    out=$(timeout 300 speedtest-cli --simple 2>&1) || exit_code=$?
     printf "%s\n" "$out"
+
+    if [ $exit_code -ne 0 ]; then
+      printf "%sWarning: speedtest-cli exited with code %s (partial results may still be valid)%s\n" \
+             "$YELLOW" "$exit_code" "$NC"
+      log_to_file "WARN" "speedtest-cli exited with code $exit_code"
+    fi
 
     extract_simple() {
       local pattern="$1"
-      echo "$out" | awk -v pat="$pattern" '$0 ~ pat { for(i=1;i<=NF;i++) if($i ~ /^[0-9]+(\.[0-9]+)?$/) {print $i; exit} }' | head -n1
+      echo "$out" | awk -v pat="$pattern" \
+        '$0 ~ pat { for(i=1;i<=NF;i++) if($i ~ /^[0-9]+(\.[0-9]+)?$/) {print $i; exit} }' \
+        | head -n1
     }
 
     network_download_mbps=$(extract_simple "^Download:")
@@ -747,8 +756,11 @@ run_network_benchmark() {
   [ -z "$network_upload_mbps" ] && network_upload_mbps="N/A"
   [ -z "$network_ping_ms" ] && network_ping_ms="N/A"
 
-  printf "%s✓%s Network speed test complete\n" "$GREEN" "$NC"
+  printf "%s✓%s Network speed test complete (Down: %s Mbps, Up: %s Mbps, Ping: %s ms)\n" \
+         "$GREEN" "$NC" "$network_download_mbps" "$network_upload_mbps" "$network_ping_ms"
   log_to_file "INFO" "Network - Down: $network_download_mbps Mbps, Up: $network_upload_mbps Mbps, Ping: $network_ping_ms ms"
+
+  return 0
 }
 
 display_system_info() {
