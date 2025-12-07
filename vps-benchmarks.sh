@@ -6,12 +6,12 @@ export LC_ALL=C LANG=C
 # VPS Benchmark Script with Result Comparison v0.2.0
 # ============================================================================
 # Usage:
-#   ./vps-benchmark.sh              # Run benchmark only
-#   ./vps-benchmark.sh --save       # Run and save to database
-#   ./vps-benchmark.sh --compare    # Run, save, and compare with previous
-#   ./vps-benchmark.sh --list       # List saved benchmark runs
-#   ./vps-benchmark.sh --quick      # Fast benchmark (reduced test times)
-#   ./vps-benchmark.sh --json       # Export results as JSON
+#   ./vps-benchmarks.sh              # Run benchmark only
+#   ./vps-benchmarks.sh --save       # Run and save to database
+#   ./vps-benchmarks.sh --compare    # Run, save, and compare with previous
+#   ./vps-benchmarks.sh --list       # List saved benchmark runs
+#   ./vps-benchmarks.sh --quick      # Fast benchmark (reduced test times)
+#   ./vps-benchmarks.sh --json       # Export results as JSON
 # ============================================================================
 
 # --- Constants ---
