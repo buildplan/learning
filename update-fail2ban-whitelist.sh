@@ -4,7 +4,7 @@
 
 # SSH target (use Host from ~/.ssh/config)
 VPS_HOST="forgejo_vps_host"    # e.g. Host alias in ~/.ssh/config
-VPS_USER="ali"
+VPS_USER="username"
 SSH_KEY="$HOME/.ssh/id_ed25519"  # or empty to use default key
 JAIL_NAME="forgejo-sshd"
 
