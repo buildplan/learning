@@ -6,6 +6,14 @@
 #
 # PURPOSE:
 #   Detects local public IP and adds it to a CrowdSec allowlist on a remote VPS.
+#   Uses a "Nuke & Pave" strategy: deletes the list and recreates it to ensure
+#   no stale IPs remain.
+#
+# FEATURES:
+#   - POSIX compliant (runs on Linux & macOS)
+#   - State file optimization (skips SSH if IP hasn't changed)
+#   - Exponential backoff (retries network failures)
+#   - ntfy notifications
 #
 #   *** CRITICAL CONFIGURATION WARNING ***
 #   This script uses a "Self-Cleaning" strategy. If the IPv4 changes, it
