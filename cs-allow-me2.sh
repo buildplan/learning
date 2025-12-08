@@ -165,11 +165,9 @@ fi
 
 # 4. Prepare Remote Command String
 # Strategy: Delete (ignore failure if missing) -> Create -> Add IPs
-REMOTE_COMMAND="
-    (docker exec crowdsec cscli allowlists delete ${ALLOWLIST_NAME} >/dev/null 2>&1 || true) && \
-    docker exec crowdsec cscli allowlists create ${ALLOWLIST_NAME} -d '${LIST_DESCRIPTION}' && \
-    docker exec crowdsec cscli allowlists add ${ALLOWLIST_NAME} ${CURRENT_IPv4} -d '${DESC_V4}'
-"
+REMOTE_COMMAND="(docker exec crowdsec cscli allowlists delete ${ALLOWLIST_NAME} >/dev/null 2>&1 || true)"
+REMOTE_COMMAND="${REMOTE_COMMAND} && docker exec crowdsec cscli allowlists create ${ALLOWLIST_NAME} -d '${LIST_DESCRIPTION}'"
+REMOTE_COMMAND="${REMOTE_COMMAND} && docker exec crowdsec cscli allowlists add ${ALLOWLIST_NAME} ${CURRENT_IPv4} -d '${DESC_V4}'"
 
 if [ -n "$CURRENT_IPv6" ]; then
     REMOTE_COMMAND="${REMOTE_COMMAND} && docker exec crowdsec cscli allowlists add ${ALLOWLIST_NAME} ${CURRENT_IPv6} -d '${DESC_V6}'"
