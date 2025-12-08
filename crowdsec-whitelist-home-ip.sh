@@ -32,13 +32,12 @@ set -u
 VPS_HOST="VPS"               # VPS hostname or IP
 SSH_USER="admin"             # SSH user on VPS
 SSH_PORT=""                  # Leave empty for default 22, or set custom port (e.g. "5555")
-SSH_KEY=""                   # SSH KEY PATH (Optional), leave empty to use default SSH behavior
-                             # If setting a path, use $HOME instead of ~, e.g.: "$HOME/.ssh/my_custom_key"
+SSH_KEY=""                   # SSH KEY PATH (Optional), leave empty for default
 
-# NAME OF THE DEDICATED LIST
-# This must match the list at CrowdSec
+# NAME OF THE DEDICATED LIST (Must match the list at CrowdSec)
 ALLOWLIST_NAME="home_dynamic_ips"
 
+# Descriptions
 DESC_V4="home dynamic IPv4"
 DESC_V6="home dynamic IPv6"
 
@@ -89,7 +88,6 @@ in_list() {
 
 # --- Preparation ---
 
-# Build the SSH Key Flag dynamically.
 SSH_KEY_FLAG=""
 if [ -n "$SSH_KEY" ]; then
     SSH_KEY_FLAG="-i $SSH_KEY"
@@ -108,7 +106,7 @@ CURRENT_IPv6=""
 if [ "$HANDLE_IPV6" = "yes" ]; then
     CURRENT_IPv6=$(get_public_ipv6)
     if [ -z "$CURRENT_IPv6" ]; then
-        ntfy_send "CrowdSec Updater: Warning" "IPv6 is enabled in settings, but no public IPv6 address could be detected."
+        ntfy_send "CrowdSec Updater: Warning" "IPv6 enabled, but no address detected."
     fi
 fi
 
@@ -137,7 +135,7 @@ clear_remote_list() {
 if ! in_list "$CURRENT_IPv4" "$REMOTE_IPS"; then
     clear_remote_list
     if ssh -q -o BatchMode=yes $SSH_KEY_FLAG -p "${SSH_PORT:-22}" "${SSH_USER}@${VPS_HOST}" \
-        "docker exec crowdsec cscli allowlists add ${ALLOWLIST_NAME} ${CURRENT_IPv4} -d '${DESC_V4}'"; then
+        "docker exec crowdsec cscli allowlists add ${ALLOWLIST_NAME} ${CURRENT_IPv4} -d '${DESC_V4:-home dynamic IPv4}'"; then
         UPDATED="yes"
         ADDED_IPS="$CURRENT_IPv4"
     else
@@ -150,7 +148,7 @@ fi
 if [ "$HANDLE_IPV6" = "yes" ] && [ -n "$CURRENT_IPv6" ]; then
     if ! in_list "$CURRENT_IPv6" "$REMOTE_IPS"; then
         if ssh -q -o BatchMode=yes $SSH_KEY_FLAG -p "${SSH_PORT:-22}" "${SSH_USER}@${VPS_HOST}" \
-            "docker exec crowdsec cscli allowlists add ${ALLOWLIST_NAME} ${CURRENT_IPv6} -d '${DESC_V6}'"; then
+            "docker exec crowdsec cscli allowlists add ${ALLOWLIST_NAME} ${CURRENT_IPv6} -d '${DESC_V6:-home dynamic IPv6}'"; then
             UPDATED="yes"
             if [ -n "$ADDED_IPS" ]; then ADDED_IPS="$ADDED_IPS, $CURRENT_IPv6"; else ADDED_IPS="$CURRENT_IPv6"; fi
         fi
