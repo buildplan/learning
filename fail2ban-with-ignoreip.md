@@ -47,3 +47,29 @@ create `/etc/fail2ban/filter.d/ufw-probes.conf`
 failregex = \[UFW BLOCK\] IN=.* OUT=.* SRC=<HOST>
 ignoreregex =
 ```
+
+---
+
+### Useful Commands
+
+| Task | Command |
+| --- | --- |
+| Check fail2ban service status | `sudo systemctl status fail2ban` |
+| Start fail2ban | `sudo systemctl start fail2ban` |
+| Restart fail2ban | `sudo systemctl restart fail2ban` |
+| View all jail statuses | `sudo fail2ban-client status` |
+| View a specific jail (e.g., sshd) | `sudo fail2ban-client status sshd` |
+| See currently banned IPs in a jail | `sudo fail2ban-client get sshd banned` |
+| Unban an IP from a jail | `sudo fail2ban-client set sshd unbanip <IP>` |
+| Get ignore list for a jail | `sudo fail2ban-client get sshd ignoreip` |
+| Manually test a filter (dry run) | `fail2ban-regex /var/log/auth.log /etc/fail2ban/filter.d/sshd.conf` |
+
+### Filter & Jail File Paths
+
+| File Purpose | Path |
+| --- | --- |
+| Jail configuration | `/etc/fail2ban/jail.local` |
+| Custom filters | `/etc/fail2ban/filter.d/` |
+| Fail2Ban main log | `/var/log/fail2ban.log` |
+| UFW log (for ufw-block) | `/var/log/ufw.log` |
+
