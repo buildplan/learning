@@ -29,7 +29,7 @@
 #      docker exec crowdsec cscli allowlists create home_dynamic_ips
 #
 # CRON EXAMPLE (Run every 15 mins):
-#   */15 * * * * /path/to/this_script.sh >/dev/null 2>&1
+#   */15 * * * * QUIET=yes /path/to/this_script.sh >/dev/null 2>&1
 # ==============================================================================
 
 set -u
@@ -51,10 +51,10 @@ DESC_V6="home dynamic IPv6"
 # Notifications
 NTFY_ENABLED="yes"
 NTFY_URL="https://ntfy.example.com/topic"
-NTFY_TOKEN="YOUR_TOKEN"
+NTFY_TOKEN="tk_xxxxxxxxxxxxxxxx"
 
 # Settings
-HANDLE_IPV6="no"
+HANDLE_IPV6="yes"
 
 # --- Advanced Config ---
 
@@ -162,13 +162,12 @@ if [ "$HANDLE_IPV6" = "yes" ]; then
 fi
 
 # 3. Check State File
+QUIET="${QUIET:-no}"
 CURRENT_STATE="${CURRENT_IPv4}|${CURRENT_IPv6}"
 
-if [ -f "$STATE_FILE" ]; then
-    LAST_STATE=$(cat "$STATE_FILE")
-    if [ "$CURRENT_STATE" = "$LAST_STATE" ]; then
-        exit 0
-    fi
+if [ -f "$STATE_FILE" ] && [ "$CURRENT_STATE" = "$(cat "$STATE_FILE")" ]; then
+  [ "$QUIET" = "yes" ] || echo "No change ($CURRENT_STATE); skipping SSH update."
+  exit 0
 fi
 
 # 4. Prepare Remote Command String
