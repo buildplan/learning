@@ -48,6 +48,37 @@ failregex = \[UFW BLOCK\] IN=.* OUT=.* SRC=<HOST>
 ignoreregex =
 ```
 
+### To ignore docker and tailscale interdace
+
+create `/etc/fail2ban/filter.d/ufw-probes.local`
+
+```conf
+[Definition]
+failregex = ^.*\[UFW BLOCK\].*\bSRC=<HOST>\b.*$
+ignoreregex = ^.*\[UFW BLOCK\] IN=(?:veth|br-|docker0|tailscale0)\S* .*$
+```
+
+Test it with both line types:
+
+```bash
+# Test with your public (ens3) line - should match - change <HOST_NAME>
+echo 'Dec 16 21:48:27 <HOST_NAME> kernel: [UFW BLOCK] IN=ens3 OUT= MAC=fa:16:3e:85:15:c2:16:b4:cb:54:7a:4f:08:00 SRC=194.50.16.198 DST=54.37.19.60 LEN=40 TOS=0x00 PREC=0x20 TTL=238 ID=54321 PROTO=TCP SPT=52609 DPT=8728 WINDOW=65535 RES=0x00 SYN URGP=0' > /tmp/test-public.log
+
+# Test with a veth line - should be ignored - change <HOST_NAME>
+echo 'Dec 16 15:45:16 <HOST_NAME> kernel: [UFW BLOCK] IN=vetha91f454 OUT= MAC= SRC=fe80:0000:0000:0000:d00a:eeff:fec8:a284 DST=ff02:0000:0000:0000:0000:0000:0001:0003 LEN=71 TC=0 HOPLIMIT=255 FLOWLBL=1013172 PROTO=UDP SPT=5355 DPT=5355 LEN=31' > /tmp/test-veth.log
+
+sudo fail2ban-regex /tmp/test-public.log /etc/fail2ban/filter.d/ufw-probes.local
+sudo fail2ban-regex /tmp/test-veth.log /etc/fail2ban/filter.d/ufw-probes.local
+```
+
+Apply to Fail2ban (running service)
+
+```bash
+sudo systemctl restart fail2ban
+sudo fail2ban-client reload ufw-probes
+sudo fail2ban-client status ufw-probes
+```
+
 ---
 
 ### Useful Commands
