@@ -169,16 +169,14 @@ _fetch_ipv6_cidr_core() {
 
   # MACOS / BSD DETECTION
   else
-    _line=$(ifconfig "$_iface" 2>/dev/null | awk '
-      $1=="inet6" && $2 !~ /^fe80:/ && $0 !~ /temporary/ {
-        for (i=1; i<=NF; i++) {
-            if ($i == "prefixlen") { plen=$(i+1) }
-        }
-        print $2, plen;
-        exit
-      }')
-    _addr=$(echo "$_line" | awk '{print $1}')
-    _plen=$(echo "$_line" | awk '{print $2}')
+    _line=$(
+      ifconfig "$_iface" 2>/dev/null | awk '
+        $1=="inet6" && $2 !~ /^fe80:/ && $0 !~ /temporary/ {
+          for (i=1; i<=NF; i++) if ($i=="prefixlen") { print $2 "/" $(i+1); exit }
+        }'
+    )
+    _addr=${_line%/*}
+    _plen=${_line#*/}
   fi
 
   # VALIDATION - Skip empty, link-local, localhost, ULA
@@ -187,7 +185,6 @@ _fetch_ipv6_cidr_core() {
   esac
 
   # NORMALIZE /64
-  # If it's a standard /64, try to zero out the host part.
   if [ "$_plen" = "64" ]; then
     case "$_addr" in
         *::*)
@@ -196,13 +193,12 @@ _fetch_ipv6_cidr_core() {
             ;;
     esac
 
-    # If no compression, safely grab the first 4 hextets
     _pfx4=$(printf "%s\n" "$_addr" | awk -F: '{print $1 ":" $2 ":" $3 ":" $4}')
     printf "%s::/64\n" "$_pfx4"
     return 0
   fi
 
-  # Fallback for non-/64 subnets (e.g. /128 or /56)
+  # Fallback
   printf "%s/%s\n" "$_addr" "${_plen}"
 }
 
