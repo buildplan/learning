@@ -181,14 +181,14 @@ _fetch_ipv6_cidr_core() {
   case "$_addr" in
     ""|fe80:*|::1|fc*|fd*) return 1 ;;
   esac
-  
+
   # NORMALIZE /64
   # If it's a standard /64, try to zero out the host part.
   if [ "$_plen" = "64" ]; then
     case "$_addr" in
-        *::*) 
-            printf "%s/64\n" "$_addr" 
-            return 0 
+        *::*)
+            printf "%s/64\n" "$_addr"
+            return 0
             ;;
     esac
 
