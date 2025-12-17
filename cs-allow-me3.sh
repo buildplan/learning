@@ -113,6 +113,7 @@ sh_quote() {
   printf "%s" "$1" | sed "s/'/'\\\\''/g; 1s/^/'/; \$s/\$/'/"
 }
 
+# shellcheck disable=SC2329
 ssh_exec() {
   _cmd=$1
   set -- ssh -q -o BatchMode=yes -o ConnectTimeout=10 -p "${SSH_PORT:-22}"
@@ -125,6 +126,7 @@ ssh_exec() {
 
 # --- IP Detection Logic ---
 
+# shellcheck disable=SC2329
 _fetch_ipv4_core() {
   _f_ip=$(curl -4 -s --connect-timeout 5 https://ip.me \
     || curl -4 -s --connect-timeout 5 https://api.ipify.org) || return 1
@@ -136,6 +138,7 @@ _fetch_ipv4_core() {
   esac
 }
 
+# shellcheck disable=SC2329
 get_default_iface() {
   if command -v ip >/dev/null 2>&1; then
     ip route show default 2>/dev/null | awk '
@@ -148,6 +151,7 @@ get_default_iface() {
 }
 
 # Returns an IPv6 CIDR suitable for allowlisting.
+# shellcheck disable=SC2329
 _fetch_ipv6_cidr_core() {
   _iface=$(get_default_iface) || return 1
   [ -n "$_iface" ] || return 1
@@ -202,7 +206,9 @@ _fetch_ipv6_cidr_core() {
   printf "%s/%s\n" "$_addr" "${_plen}"
 }
 
+# shellcheck disable=SC2329
 fetch_ipv4_to_tmp() { _fetch_ipv4_core > "$_TMP_OUT"; }
+# shellcheck disable=SC2329
 fetch_ipv6_cidr_to_tmp() { _fetch_ipv6_cidr_core > "$_TMP_OUT"; }
 
 # --- Main Execution ---
