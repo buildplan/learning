@@ -71,7 +71,6 @@ BASE_WAIT=5
 _TMP_OUT=$(mktemp) || { echo "Failed to create temp file" >&2; exit 1; }
 trap 'rm -f "$_TMP_OUT"' EXIT INT TERM
 
-# --- Helpers ---
 ntfy_send() {
   _n_title=$1
   _n_msg=$2
@@ -149,8 +148,6 @@ get_default_iface() {
 }
 
 # Returns an IPv6 CIDR suitable for allowlisting.
-# Prefers a non-temporary global IPv6 on the default interface.
-# If prefixlen is 64, normalizes to <first4hextets>::/64.
 _fetch_ipv6_cidr_core() {
   _iface=$(get_default_iface) || return 1
   [ -n "$_iface" ] || return 1
@@ -158,55 +155,51 @@ _fetch_ipv6_cidr_core() {
   _addr=""
   _plen=""
 
+  # LINUX DETECTION
   if command -v ip >/dev/null 2>&1; then
-    # Prefer non-temporary global addresses first
-    _line=$(ip -6 addr show dev "$_iface" scope global 2>/dev/null | awk '
-      /inet6/ && $0 !~ /temporary/ {print $2; exit}
-    ')
-    [ -n "$_line" ] || _line=$(ip -6 addr show dev "$_iface" scope global 2>/dev/null | awk '
-      /inet6/ {print $2; exit}
+    _line=$(ip -6 -o addr show dev "$_iface" scope global 2>/dev/null | awk '
+      $0 !~ /temporary/ { print $4; exit }
     ')
     _addr=${_line%/*}
     _plen=${_line#*/}
+
+  # MACOS / BSD DETECTION
   else
-    # macOS / BSD: parse ifconfig output
     _line=$(ifconfig "$_iface" 2>/dev/null | awk '
       $1=="inet6" && $2 !~ /^fe80:/ && $0 !~ /temporary/ {
-        a=$2; p="";
-        for (i=1; i<=NF; i++) if ($i=="prefixlen") p=$(i+1);
-        if (a != "" && p != "") { print a " " p; exit }
+        for (i=1; i<=NF; i++) {
+            if ($i == "prefixlen") { plen=$(i+1) }
+        }
+        print $2, plen;
+        exit
       }')
-    [ -n "$_line" ] || _line=$(ifconfig "$_iface" 2>/dev/null | awk '
-      $1=="inet6" && $2 !~ /^fe80:/ {
-        a=$2; p="";
-        for (i=1; i<=NF; i++) if ($i=="prefixlen") p=$(i+1);
-        if (a != "" && p != "") { print a " " p; exit }
-      }')
-
-    _addr=$(printf "%s\n" "$_line" | awk '{print $1}')
-    _plen=$(printf "%s\n" "$_line" | awk '{print $2}')
+    _addr=$(echo "$_line" | awk '{print $1}')
+    _plen=$(echo "$_line" | awk '{print $2}')
   fi
 
-  # basic sanity
+  # VALIDATION - Skip empty, link-local, localhost, ULA
   case "$_addr" in
     ""|fe80:*|::1|fc*|fd*) return 1 ;;
   esac
-  case "$_plen" in
-    ""|*[!0-9]*) return 1 ;;
-  esac
-
+  
+  # NORMALIZE /64
+  # If it's a standard /64, try to zero out the host part.
   if [ "$_plen" = "64" ]; then
-    _pfx4=$(printf "%s\n" "$_addr" | awk -F: '{print $1 ":" $2 ":" $3 ":" $4}')
-    case "$_pfx4" in
-      *::*|::*|*:) return 1 ;; # crude guard against weird parses
+    case "$_addr" in
+        *::*) 
+            printf "%s/64\n" "$_addr" 
+            return 0 
+            ;;
     esac
-    printf "%s\n" "${_pfx4}::/64"
+
+    # If no compression, safely grab the first 4 hextets
+    _pfx4=$(printf "%s\n" "$_addr" | awk -F: '{print $1 ":" $2 ":" $3 ":" $4}')
+    printf "%s::/64\n" "$_pfx4"
     return 0
   fi
 
-  # Fallback: use the address/prefix as-is
-  printf "%s\n" "${_addr}/${_plen}"
-  return 0
+  # Fallback for non-/64 subnets (e.g. /128 or /56)
+  printf "%s/%s\n" "$_addr" "${_plen}"
 }
 
 fetch_ipv4_to_tmp() { _fetch_ipv4_core > "$_TMP_OUT"; }
