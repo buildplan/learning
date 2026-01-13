@@ -97,75 +97,82 @@ install_crowdsec() {
 analyze_fail2ban() {
     print_info "Checking for existing Fail2Ban installation..."
 
+    # Check if F2B is installed
     if ! command -v fail2ban-client >/dev/null 2>&1; then
-        print_info "Fail2Ban not found. Skipping migration."
+        print_info "Fail2Ban not found. Proceeding with default CrowdSec setup."
+        install_collection "crowdsecurity/linux" "Standard Linux"
+        install_collection "crowdsecurity/iptables" "Iptables/UFW"
+        configure_ufw_acquisition
         return 0
     fi
 
+    # Check active jails
     if ! systemctl is-active --quiet fail2ban; then
-        print_warning "Fail2Ban is installed but not active. Skipping jail analysis."
+        print_warning "Fail2Ban is installed but not active."
+        if confirm "Do you want to install standard CrowdSec collections anyway?" "y"; then
+            install_collection "crowdsecurity/linux" "Standard Linux"
+            install_collection "crowdsecurity/iptables" "Iptables/UFW"
+            configure_ufw_acquisition
+        fi
         return 0
     fi
 
     print_info "Fail2Ban is active. Analyzing enabled jails..."
 
-    # Get list of active jails
-    # Clean output to get just names separated by space
     local JAILS
     JAILS=$(fail2ban-client status | grep "Jail list:" | sed 's/.*Jail list://g' | tr -d ',' | xargs)
 
     if [[ -z "$JAILS" ]]; then
         print_info "No active Fail2Ban jails found."
-        return 0
+    else
+        print_info "Found active jails: $JAILS"
+        print_info "Attempting to map jails to CrowdSec collections..."
+
+        # Ensure hub is updated
+        cscli hub update >> "$LOG_FILE" 2>&1
+
+        # Always install base Linux and Iptables collections
+        install_collection "crowdsecurity/linux" "Standard Linux"
+        install_collection "crowdsecurity/iptables" "Iptables/UFW"
+
+        for jail in $JAILS; do
+            case "$jail" in
+                sshd|ssh)
+                    install_collection "crowdsecurity/sshd" "SSH"
+                    ;;
+                nginx-http-auth|nginx-botsearch|nginx-badbots|nginx-limit-req)
+                    install_collection "crowdsecurity/nginx" "Nginx"
+                    ;;
+                apache|apache-auth|apache-badbots|apache-overflows|apache-noscript)
+                    install_collection "crowdsecurity/apache2" "Apache"
+                    ;;
+                mysqld-auth|mysql-auth)
+                    install_collection "crowdsecurity/mysql" "MySQL"
+                    ;;
+                wordpress|wp-auth)
+                    install_collection "crowdsecurity/wordpress" "WordPress"
+                    ;;
+                dovecot)
+                    install_collection "crowdsecurity/dovecot" "Dovecot"
+                    ;;
+                postfix)
+                    install_collection "crowdsecurity/postfix" "Postfix"
+                    ;;
+                recidive)
+                    print_info "Skipping 'recidive' (CrowdSec handles repeat offenders natively)."
+                    ;;
+                *)
+                    print_warning "No direct mapping found for jail: '$jail'. Search Hub manually: 'cscli hub list'"
+                    ;;
+            esac
+        done
     fi
 
-    print_info "Found active jails: $JAILS"
-    print_info "Attempting to map jails to CrowdSec collections..."
-
-    # Update cscli hub to ensure we find collections
-    cscli hub update >> "$LOG_FILE" 2>&1
-
-    for jail in $JAILS; do
-        case "$jail" in
-            sshd|ssh)
-                install_collection "crowdsec/sshd" "SSH"
-                ;;
-            nginx-http-auth|nginx-botsearch|nginx-badbots|nginx-limit-req)
-                install_collection "crowdsec/nginx" "Nginx"
-                ;;
-            apache|apache-auth|apache-badbots|apache-overflows|apache-noscript)
-                install_collection "crowdsec/apache2" "Apache"
-                ;;
-            mysqld-auth|mysql-auth)
-                install_collection "crowdsec/mysql" "MySQL"
-                ;;
-            wordpress|wp-auth)
-                install_collection "crowdsec/wordpress" "WordPress"
-                ;;
-            dovecot)
-                install_collection "crowdsec/dovecot" "Dovecot"
-                ;;
-            postfix)
-                install_collection "crowdsec/postfix" "Postfix"
-                ;;
-            recidive)
-                # Recidive is internal to F2B, CrowdSec handles this natively via scenarios
-                print_info "Skipping 'recidive' (CrowdSec handles repeat offenders natively)."
-                ;;
-            *)
-                print_warning "No direct mapping found for jail: '$jail'. Search Hub manually: 'cscli hub list'"
-                ;;
-        esac
-    done
-
-    # Handle UFW specifically (if F2B was monitoring UFW logs)
-    if [[ "$JAILS" == *"ufw"* ]] || [ -f /var/log/ufw.log ]; then
-        print_info "Detecting UFW usage..."
-        configure_ufw_acquisition
-    fi
+    # Ensure UFW log acquisition is set
+    configure_ufw_acquisition
 
     printf "\n"
-    print_warning "CrowdSec configured based on your Fail2Ban jails."
+    print_warning "CrowdSec is now configured."
     print_warning "Running both Fail2Ban and CrowdSec simultaneously adds redundancy but consumes more resources."
 
     if confirm "Do you want to stop and disable Fail2Ban now?" "y"; then
@@ -194,12 +201,16 @@ install_collection() {
         if cscli collections install "$collection" >> "$LOG_FILE" 2>&1; then
             print_success "Installed $collection."
         else
-            print_error "Failed to install $collection."
+            print_error "Failed to install $collection. Check logs."
         fi
     fi
 }
 
 configure_ufw_acquisition() {
+    # 1. Install the parser first (Crucial Fix)
+    install_collection "crowdsecurity/iptables" "Iptables/UFW Parser"
+
+    # 2. Configure log reading
     local ACQUIS_FILE="/etc/crowdsec/acquis.d/ufw.yaml"
     mkdir -p /etc/crowdsec/acquis.d
 
@@ -208,14 +219,14 @@ configure_ufw_acquisition() {
         return
     fi
 
-    # Check if log exists
+    # Check if UFW log exists or needs enabling
     if [[ ! -f /var/log/ufw.log ]]; then
-        # Check syslog for UFW entries if separate log doesn't exist
+        # Check if logs are going to syslog
         if grep -q "UFW BLOCK" /var/log/syslog 2>/dev/null; then
-            print_info "UFW logs found in syslog. CrowdSec should auto-detect syslog."
+            print_info "UFW logs detected in syslog."
             return
         else
-            print_warning "/var/log/ufw.log not found. Enabling logging..."
+            print_warning "/var/log/ufw.log not found. Enabling UFW logging..."
             ufw logging on >> "$LOG_FILE" 2>&1 || true
             touch /var/log/ufw.log
         fi
@@ -228,7 +239,8 @@ filenames:
 labels:
   type: syslog
 EOF
-    # Reload needed to pick up new acquisition
+
+    # Reload needed to pick up new acquisition and parser
     systemctl reload crowdsec
     print_success "UFW log acquisition configured."
 }
@@ -264,7 +276,6 @@ verify_installation() {
     if systemctl is-active --quiet crowdsec-firewall-bouncer; then
         print_success "Firewall Bouncer is active."
     elif dpkg -l | grep -q crowdsec-firewall-bouncer-iptables; then
-        # Sometimes the service name varies slightly or it failed
         print_warning "Firewall Bouncer service issue. Check 'systemctl status crowdsec-firewall-bouncer'."
     fi
 
@@ -292,3 +303,4 @@ verify_installation
 printf "\n"
 print_success "Setup complete!"
 print_info "View logs at: $LOG_FILE"
+print_info "For further configuration, visit: https://docs.crowdsec.net/"
