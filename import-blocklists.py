@@ -16,6 +16,11 @@ import re
 import tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+# --- ROOT CHECK ---
+if os.geteuid() != 0:
+    print("Error: This script must be run as root (use sudo).", file=sys.stderr)
+    sys.exit(1)
+
 # --- CONFIGURATION ---
 NFT_TABLE = "crowdsec_blocklists"
 LOG_FILE = "/var/log/import-blocklists.log"
@@ -274,10 +279,6 @@ table inet {NFT_TABLE} {{
             os.remove(nft_path)
 
 def main():
-    # Root check
-    if os.geteuid() != 0:
-        log.error("This script must be run as root (use sudo).")
-        sys.exit(1)
     # File locking
     lock_file = "/tmp/import-blocklists.lock"
     if os.path.exists(lock_file):
