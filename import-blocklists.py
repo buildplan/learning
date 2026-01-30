@@ -224,8 +224,8 @@ table inet {NFT_TABLE} {{
 
     chain inbound {{
         type filter hook input priority -100; policy accept;
-        ip saddr @v4_list drop
-        ip6 saddr @v6_list drop
+        ip saddr @v4_list counter drop
+        ip6 saddr @v6_list counter drop
     }}
 }}
 """
