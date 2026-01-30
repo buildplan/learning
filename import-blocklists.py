@@ -22,7 +22,7 @@ if os.geteuid() != 0:
     sys.exit(1)
 
 # --- CONFIGURATION ---
-NFT_TABLE = "crowdsec_blocklists"
+NFT_TABLE = "import_blocklists"
 LOG_FILE = "/var/log/import-blocklists.log"
 LOG_MAX_LINES = 2000
 MIN_IPS = 200  # Safety brake threshold
