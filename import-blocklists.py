@@ -12,6 +12,7 @@ import ipaddress
 import urllib.request
 import urllib.error
 import time
+import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # --- CONFIGURATION ---
@@ -31,9 +32,7 @@ CUSTOM_WHITELIST = [
     "2606:4700:4700::1111"
 ]
 
-# Blocklist Sources (Name, URL, Type)
-# Type 0 = Plain IP list
-# Type 1 = DShield format (IP is 1st column, subnet is 3rd column) -> Handled generically by parsing
+# Blocklist Sources
 BLOCKLISTS = [
     ("AbuseIPDB", "https://raw.githubusercontent.com/borestad/blocklist-abuseipdb/main/abuseipdb-s100-30d.ipv4"),
     ("IPsum", "https://raw.githubusercontent.com/stamparm/ipsum/master/levels/3.txt"),
@@ -82,8 +81,12 @@ def fetch_url(name, url):
     return None
 
 def parse_ips(text):
-    """Extracts valid IP networks from text, ignoring comments."""
+    """Extracts valid IP networks from text, handling URLs and comments."""
     valid_nets = []
+
+    # Regex to find potential IPv4 addresses (e.g., inside a URL)
+    # Matches 1.2.3.4 but ignores 1.2.3.4.5 or version numbers
+    ipv4_pattern = re.compile(r'\b(?:\d{1,3}\.){3}\d{1,3}\b')
 
     for line in text.splitlines():
         line = line.strip()
@@ -94,17 +97,26 @@ def parse_ips(text):
 
         if not line: continue
 
-        # DShield format (StartIP  EndIP  Netmask  Count)
-        # try to grab the first token as the IP/Network
-        parts = line.split()
-        token = parts[0]
-
+        # 1. Try Direct Parsing - standard lists & CIDRs
         try:
+            # Take first token - handles DShield format
+            token = line.split()[0]
             # strict=False allows dirty bits (e.g. 1.2.3.1/24 -> 1.2.3.0/24)
             net = ipaddress.ip_network(token, strict=False)
             valid_nets.append(net)
+            continue # If successful, move to next line
         except ValueError:
-            continue
+            pass
+
+        # 2. Try Regex Extraction (URLhaus)
+        # Find "182.113.219.98" inside "http://182.113.219.98:47790/bin.sh"
+        match = ipv4_pattern.search(line)
+        if match:
+            try:
+                net = ipaddress.ip_network(match.group(), strict=False)
+                valid_nets.append(net)
+            except ValueError:
+                continue
 
     return valid_nets
 
