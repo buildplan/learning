@@ -165,23 +165,39 @@ def get_blocklists():
 def optimize_and_filter(networks, whitelist):
     """Removes whitelisted IPs and merges overlapping subnets."""
     # 1. Collapse overlaps (e.g. 1.1.1.1 + 1.1.1.2 -> 1.1.1.0/31)
-    # This handles deduplication
-    optimized = list(ipaddress.collapse_addresses(networks))
+    networks = list(ipaddress.collapse_addresses(networks))
 
-    # 2. Filter Whitelist (Check for overlaps)
-    final_list = []
+    # 2. Process Whitelist
     whitelist_nets = [ipaddress.ip_network(w, strict=False) for w in whitelist]
+    final_list = []
 
-    for net in optimized:
-        whitelisted = False
+    for net in networks:
+        candidates = [net]
+
         for wl in whitelist_nets:
-            if net.overlaps(wl):
-                whitelisted = True
-                break
-        if not whitelisted:
-            final_list.append(net)
+            new_candidates = []
+            for candidate in candidates:
+                if not candidate.overlaps(wl):
+                    new_candidates.append(candidate)
+                    continue
 
-    return final_list
+                if wl.supernet_of(candidate) or wl == candidate:
+                    continue
+
+                try:
+                    subnets = list(candidate.address_exclude(wl))
+                    new_candidates.extend(subnets)
+                except ValueError:
+                    pass
+
+            candidates = new_candidates
+
+            if not candidates:
+                break
+
+        final_list.extend(candidates)
+
+    return list(ipaddress.collapse_addresses(final_list))
 
 def apply_nftables(v4_nets, v6_nets):
     """Generates NFTables config and applies it."""
