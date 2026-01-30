@@ -104,7 +104,7 @@ def is_safe_ip(net):
     if net.is_loopback: return False
     if net.is_link_local: return False
     if net.is_multicast: return False
-    if net.is_reserved: return False 
+    if net.is_reserved: return False
 
     if isinstance(net, ipaddress.IPv4Network) and str(net).startswith('0.'):
         return False
