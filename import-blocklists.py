@@ -105,19 +105,21 @@ def fetch_url(name, url):
 
 def is_safe_ip(net):
     """Returns True if the IP is global and safe to block (not private/local)."""
+    # Universal checks (v4 and v6)
     if net.is_private: return False
     if net.is_loopback: return False
     if net.is_link_local: return False
     if net.is_multicast: return False
     if net.is_reserved: return False
 
-    if isinstance(net, ipaddress.IPv4Network) and str(net).startswith('0.'):
-        return False
+    # IPv4 specific checks
+    if isinstance(net, ipaddress.IPv4Network):
+        if str(net).startswith('0.'): return False
 
     return True
 
-def parse_ips(text):
-    """Extracts valid IP networks from text, handling URLs and comments."""
+def parse_ips(name, text):
+    """Extracts valid IP networks from text, handling URLs, comments, and DShield format."""
     valid_nets = []
 
     # Regex to find IPv4 addresses inside URLs
@@ -128,23 +130,35 @@ def parse_ips(text):
         if '#' in line: line = line.split('#', 1)[0]
         if ';' in line: line = line.split(';', 1)[0]
         line = line.strip()
-
         if not line: continue
 
         net = None
-        # 1. Try Direct Parsing
-        try:
-            token = line.split()[0]
-            net = ipaddress.ip_network(token, strict=False)
-        except ValueError:
-            # 2. Try Regex Extraction
-            match = ipv4_pattern.search(line)
-            if match:
+
+        # DShield handling
+        if name == "DShield":
+            parts = line.split()
+            if len(parts) >= 3 and parts[2].isdigit():
                 try:
-                    net = ipaddress.ip_network(match.group(), strict=False)
+                    prefix = int(parts[2])
+                    if 0 <= prefix <= 32:
+                        net = ipaddress.ip_network(f"{parts[0]}/{prefix}", strict=False)
                 except ValueError:
                     pass
 
+        # 2. Standard Parsing
+        if net is None:
+            try:
+                token = line.split()[0]
+                net = ipaddress.ip_network(token, strict=False)
+            except ValueError:
+                match = ipv4_pattern.search(line)
+                if match:
+                    try:
+                        net = ipaddress.ip_network(match.group(), strict=False)
+                    except ValueError:
+                        pass
+
+        # 3. Security Filter
         if net and is_safe_ip(net):
             valid_nets.append(net)
 
@@ -163,7 +177,7 @@ def get_blocklists():
             content = future.result()
 
             if content:
-                nets = parse_ips(content)
+                nets = parse_ips(name, content)
                 if not nets:
                     log.warning(f"{name}: Downloaded empty or invalid list.")
                     continue
@@ -192,6 +206,9 @@ def optimize_and_filter(networks, whitelist):
         candidates = [net]
 
         for wl in whitelist_nets:
+            if net.version != wl.version:
+                continue
+
             new_candidates = []
             for candidate in candidates:
                 if not candidate.overlaps(wl):
@@ -216,8 +233,7 @@ def optimize_and_filter(networks, whitelist):
     return list(ipaddress.collapse_addresses(final_list))
 
 def apply_nftables(v4_nets, v6_nets):
-    """Generates NFTables config and applies it using a tempfile."""
-
+    """Generates NFTables config and applies it using a secure tempfile."""
     v4_str = ", ".join(str(n) for n in v4_nets)
     v6_str = ", ".join(str(n) for n in v6_nets)
 
