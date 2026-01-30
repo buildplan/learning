@@ -24,6 +24,7 @@ if os.geteuid() != 0:
 # --- CONFIGURATION ---
 NFT_TABLE = "crowdsec_blocklists"
 LOG_FILE = "/var/log/import-blocklists.log"
+LOG_MAX_LINES = 2000
 MIN_IPS = 200  # Safety brake threshold
 MAX_WORKERS = 10  # How many downloads to run at once
 TIMEOUT = 15  # Seconds per request
@@ -73,6 +74,21 @@ BLOCKLISTS = [
 ]
 
 # --- SETUP LOGGING ---
+def truncate_log_if_needed():
+    """Truncate log file if it exceeds MAX_LINES, keeping most recent entries."""
+    if not os.path.exists(LOG_FILE):
+        return
+    try:
+        with open(LOG_FILE, 'r') as f:
+            lines = f.readlines()
+        if len(lines) > LOG_MAX_LINES:
+            with open(LOG_FILE, 'w') as f:
+                f.write(f"[Log truncated - kept last {LOG_MAX_LINES} lines]\n")
+                f.writelines(lines[-LOG_MAX_LINES:])
+    except Exception as e:
+        print(f"Warning: Could not truncate log: {e}", file=sys.stderr)
+
+truncate_log_if_needed()
 logging.basicConfig(
     level=logging.INFO,
     format="[%(asctime)s] [%(levelname)s] %(message)s",
@@ -221,6 +237,9 @@ def optimize_and_filter(networks, whitelist):
                 try:
                     subnets = list(candidate.address_exclude(wl))
                     new_candidates.extend(subnets)
+                except ValueError as e:
+                    log.debug(f"Could not exclude {wl} from {candidate}: {e}")
+                    new_candidates.append(candidate)
                 except ValueError:
                     pass
 
