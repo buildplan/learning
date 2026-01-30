@@ -13,6 +13,7 @@ import urllib.request
 import urllib.error
 import time
 import re
+import tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # --- CONFIGURATION ---
@@ -235,31 +236,37 @@ table inet {NFT_TABLE} {{
 """
 
     # Write to temp file
-    nft_path = "/tmp/apply_blocklist.nft"
-    with open(nft_path, "w") as f:
-        f.write(config)
+    with tempfile.NamedTemporaryFile(mode='w', delete=False) as tmp:
+        tmp.write(config)
+        nft_path = tmp.name
 
-    # Validation Run
-    chk = subprocess.run(["nft", "-c", "-f", nft_path], capture_output=True, text=True)
-    if chk.returncode != 0:
-        log.error("NFTables syntax check failed!")
-        log.error(chk.stderr)
-        return False
+    try:
+        # Validation Run
+        chk = subprocess.run(["nft", "-c", "-f", nft_path], capture_output=True, text=True)
+        if chk.returncode != 0:
+            log.error("NFTables syntax check failed!")
+            log.error(chk.stderr)
+            return False
 
-    # Apply
-    # 1. Flush old table (ignore error if doesn't exist)
-    subprocess.run(["nft", "delete", "table", "inet", NFT_TABLE], stderr=subprocess.DEVNULL)
+        # Apply
+        # 1. Flush old table (ignore error if doesn't exist)
+        subprocess.run(["nft", "delete", "table", "inet", NFT_TABLE], stderr=subprocess.DEVNULL)
 
-    # 2. Load new rules
-    apply = subprocess.run(["nft", "-f", nft_path], capture_output=True, text=True)
+        # 2. Load new rules
+        apply = subprocess.run(["nft", "-f", nft_path], capture_output=True, text=True)
 
-    if apply.returncode == 0:
-        log.info(f"✓ Success! Blocked {len(v4_nets)} IPv4 and {len(v6_nets)} IPv6 networks.")
-        return True
-    else:
-        log.error("Failed to apply NFTables rules.")
-        log.error(apply.stderr)
-        return False
+        if apply.returncode == 0:
+            log.info(f"✓ Success! Blocked {len(v4_nets)} IPv4 and {len(v6_nets)} IPv6 networks.")
+            return True
+        else:
+            log.error("Failed to apply NFTables rules.")
+            log.error(apply.stderr)
+            return False
+
+    finally:
+        # clean up the temp file
+        if os.path.exists(nft_path):
+            os.remove(nft_path)
 
 def main():
     # File locking
