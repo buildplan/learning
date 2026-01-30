@@ -1,3 +1,5 @@
+#!/bin/bash
+
 ##############################################################################################
 # save this in /usr/local/sbin/backup_home_to_hetzner.sh                                     #
 # copy roor ssh key to Hetzner                                                               #   
@@ -7,7 +9,7 @@
 # test:                                                                                      #
 # ssh -p 23 u444300-sub4@u444300.your-storagebox.de 'echo "Root SSH key login successful"'   #
 ##############################################################################################
-#!/bin/bash
+
 set -euo pipefail # Exit on error, undefined variable, or pipe failure
 
 # --- Script Configuration ---
