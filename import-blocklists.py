@@ -20,7 +20,7 @@ NFT_TABLE = "crowdsec_blocklists"
 LOG_FILE = "/var/log/import-blocklists.log"
 MIN_IPS = 200  # Safety brake threshold
 MAX_WORKERS = 10  # How many downloads to run at once
-TIMEOUT = 10  # Seconds per request
+TIMEOUT = 15  # Seconds per request
 RETRIES = 3
 
 # Custom Whitelist (IPs or CIDRs)
@@ -42,10 +42,23 @@ BLOCKLISTS = [
     ("URLhaus", "https://urlhaus.abuse.ch/downloads/text_online/"),
     ("CI Army", "https://cinsscore.com/list/ci-badguys.txt"),
     ("Binary Defense", "https://www.binarydefense.com/banlist.txt"),
+    ("Bruteforce Blocker", "https://danger.rulez.sk/projects/bruteforceblocker/blist.php"),
     ("Tor Exit Nodes", "https://check.torproject.org/torbulkexitlist"),
-    ("Blocklist.de", "https://lists.blocklist.de/lists/all.txt"),
+    ("Blocklist.de All", "https://lists.blocklist.de/lists/all.txt"),
+    ("Blocklist.de SSH", "https://lists.blocklist.de/lists/ssh.txt"),
+    ("Blocklist.de Apache", "https://lists.blocklist.de/lists/apache.txt"),
+    ("Blocklist.de Mail", "https://lists.blocklist.de/lists/mail.txt"),
     ("GreenSnow", "https://blocklist.greensnow.co/greensnow.txt"),
     ("DShield", "https://feeds.dshield.org/block.txt"),
+    ("Botscout", "https://raw.githubusercontent.com/firehol/blocklist-ipsets/refs/heads/master/botscout_7d.ipset"),
+    ("Firehol L1", "https://raw.githubusercontent.com/firehol/blocklist-ipsets/master/firehol_level1.netset"),
+    ("Firehol L2", "https://raw.githubusercontent.com/firehol/blocklist-ipsets/master/firehol_level2.netset"),
+    ("Firehol L3", "https://raw.githubusercontent.com/firehol/blocklist-ipsets/refs/heads/master/firehol_level3.netset"),
+    ("MyIP.ms", "https://raw.githubusercontent.com/firehol/blocklist-ipsets/refs/heads/master/myip.ipset"),
+    ("SOCKS Proxies", "https://raw.githubusercontent.com/firehol/blocklist-ipsets/refs/heads/master/socks_proxy_7d.ipset"),
+    ("Botvrij", "https://www.botvrij.eu/data/ioclist.ip-dst.raw"),
+    ("StopForumSpam", "https://www.stopforumspam.com/downloads/toxic_ip_cidr.txt"),
+    ("Shodan Scanners", "https://gist.githubusercontent.com/jfqd/4ff7fa70950626a11832a4bc39451c1c/raw"),
     ("Spamhaus DROPv6", "https://www.spamhaus.org/drop/dropv6.txt"),
 ]
 
@@ -84,8 +97,8 @@ def parse_ips(text):
     """Extracts valid IP networks from text, handling URLs and comments."""
     valid_nets = []
 
-    # Regex to find potential IPv4 addresses (e.g., inside a URL)
-    # Matches 1.2.3.4 but ignores 1.2.3.4.5 or version numbers
+    # Regex to find IPv4 addresses inside a URLs
+    # Matches 1.2.3.4 but ignores 1.2.3.4.5
     ipv4_pattern = re.compile(r'\b(?:\d{1,3}\.){3}\d{1,3}\b')
 
     for line in text.splitlines():
