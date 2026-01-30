@@ -98,43 +98,50 @@ def fetch_url(name, url):
             time.sleep(1)
     return None
 
+def is_safe_ip(net):
+    """Returns True if the IP is global and safe to block (not private/local)."""
+    if net.is_private: return False
+    if net.is_loopback: return False
+    if net.is_link_local: return False
+    if net.is_multicast: return False
+    if net.is_reserved: return False 
+
+    if isinstance(net, ipaddress.IPv4Network) and str(net).startswith('0.'):
+        return False
+
+    return True
+
 def parse_ips(text):
     """Extracts valid IP networks from text, handling URLs and comments."""
     valid_nets = []
 
-    # Regex to find IPv4 addresses inside a URLs
-    # Matches 1.2.3.4 but ignores 1.2.3.4.5
+    # Regex to find IPv4 addresses inside URLs
     ipv4_pattern = re.compile(r'\b(?:\d{1,3}\.){3}\d{1,3}\b')
 
     for line in text.splitlines():
         line = line.strip()
-        # Remove comments
         if '#' in line: line = line.split('#', 1)[0]
         if ';' in line: line = line.split(';', 1)[0]
         line = line.strip()
 
         if not line: continue
 
-        # 1. Try Direct Parsing - standard lists & CIDRs
+        net = None
+        # 1. Try Direct Parsing
         try:
-            # Take first token - handles DShield format
             token = line.split()[0]
-            # strict=False allows dirty bits (e.g. 1.2.3.1/24 -> 1.2.3.0/24)
             net = ipaddress.ip_network(token, strict=False)
-            valid_nets.append(net)
-            continue # If successful, move to next line
         except ValueError:
-            pass
+            # 2. Try Regex Extraction
+            match = ipv4_pattern.search(line)
+            if match:
+                try:
+                    net = ipaddress.ip_network(match.group(), strict=False)
+                except ValueError:
+                    pass
 
-        # 2. Try Regex Extraction (URLhaus)
-        # Find "182.113.219.98" inside "http://182.113.219.98:47790/bin.sh"
-        match = ipv4_pattern.search(line)
-        if match:
-            try:
-                net = ipaddress.ip_network(match.group(), strict=False)
-                valid_nets.append(net)
-            except ValueError:
-                continue
+        if net and is_safe_ip(net):
+            valid_nets.append(net)
 
     return valid_nets
 
@@ -169,7 +176,7 @@ def get_blocklists():
 
 def optimize_and_filter(networks, whitelist):
     """Removes whitelisted IPs and merges overlapping subnets."""
-    # 1. Collapse overlaps (e.g. 1.1.1.1 + 1.1.1.2 -> 1.1.1.0/31)
+    # 1. Collapse overlaps
     networks = list(ipaddress.collapse_addresses(networks))
 
     # 2. Process Whitelist
@@ -196,7 +203,6 @@ def optimize_and_filter(networks, whitelist):
                     pass
 
             candidates = new_candidates
-
             if not candidates:
                 break
 
@@ -205,9 +211,8 @@ def optimize_and_filter(networks, whitelist):
     return list(ipaddress.collapse_addresses(final_list))
 
 def apply_nftables(v4_nets, v6_nets):
-    """Generates NFTables config and applies it."""
+    """Generates NFTables config and applies it using a tempfile."""
 
-    # Convert list of network objects to comma-separated strings
     v4_str = ", ".join(str(n) for n in v4_nets)
     v6_str = ", ".join(str(n) for n in v6_nets)
 
@@ -272,7 +277,6 @@ def main():
     # File locking
     lock_file = "/tmp/import-blocklists.lock"
     if os.path.exists(lock_file):
-        # Check if PID is still alive
         try:
             with open(lock_file, 'r') as f:
                 pid = int(f.read().strip())
