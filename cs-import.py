@@ -14,8 +14,6 @@ import urllib.request
 import urllib.error
 import time
 import re
-import json
-import tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # --- ROOT CHECK ---
@@ -72,76 +70,47 @@ BLOCKLISTS = [
     ("Spamhaus DROPv6", "https://www.spamhaus.org/drop/dropv6.txt"),
 ]
 
-# --- LOGGING SETUP ---
-logging.basicConfig(
-    level=logging.INFO,
-    format="[%(asctime)s] [%(levelname)s] %(message)s",
-    handlers=[logging.FileHandler(LOG_FILE), logging.StreamHandler(sys.stdout)]
-)
+# --- LOGGING ---
+logging.basicConfig(level=logging.INFO, format="[%(asctime)s] [%(levelname)s] %(message)s",
+                    handlers=[logging.FileHandler(LOG_FILE), logging.StreamHandler(sys.stdout)])
 log = logging.getLogger()
 
 # --- HELPER FUNCTIONS ---
-
 def fetch_url(name, url):
-    attempt = 0
-    while attempt < RETRIES:
+    for attempt in range(RETRIES):
         try:
-            req = urllib.request.Request(url, headers={'User-Agent': 'Blocklist-Updater/2.0 (Python)'})
+            req = urllib.request.Request(url, headers={'User-Agent': 'Blocklist-Updater/3.0'})
             with urllib.request.urlopen(req, timeout=TIMEOUT) as response:
-                if response.status == 200:
-                    return response.read().decode('utf-8', errors='ignore')
-        except Exception as e:
-            attempt += 1
-            if attempt == RETRIES:
-                log.warning(f"{name}: Failed after {RETRIES} retries. Error: {e}")
-                return None
-            time.sleep(1)
+                if response.status == 200: return response.read().decode('utf-8', errors='ignore')
+        except Exception: time.sleep(1)
+    log.warning(f"{name}: Failed download.")
     return None
 
 def is_safe_ip(net):
-    if net.is_private or net.is_loopback or net.is_link_local or net.is_multicast or net.is_reserved:
-        return False
-    if isinstance(net, ipaddress.IPv4Network) and str(net).startswith('0.'):
-        return False
+    if net.is_private or net.is_loopback or net.is_link_local or net.is_multicast or net.is_reserved: return False
+    if isinstance(net, ipaddress.IPv4Network) and str(net).startswith('0.'): return False
     return True
 
 def parse_ips(name, text):
     valid_nets = set()
     ipv4_pattern = re.compile(r'\b(?:\d{1,3}\.){3}\d{1,3}\b')
-
     for line in text.splitlines():
-        line = line.strip()
-        if '#' in line: line = line.split('#', 1)[0]
-        if ';' in line: line = line.split(';', 1)[0]
-        line = line.strip()
+        line = line.strip().split('#')[0].split(';')[0].strip()
         if not line: continue
-
         net = None
-        # 1. DShield Handling
         if name == "DShield":
             parts = line.split()
             if len(parts) >= 3 and parts[2].isdigit():
-                try:
-                    prefix = int(parts[2])
-                    if 0 <= prefix <= 32:
-                        net = ipaddress.ip_network(f"{parts[0]}/{prefix}", strict=False)
+                try: net = ipaddress.ip_network(f"{parts[0]}/{parts[2]}", strict=False)
                 except ValueError: pass
-
-        # 2. Standard Parsing
         if net is None:
-            try:
-                token = line.split()[0]
-                net = ipaddress.ip_network(token, strict=False)
+            try: net = ipaddress.ip_network(line.split()[0], strict=False)
             except ValueError:
                 match = ipv4_pattern.search(line)
                 if match:
-                    try:
-                        net = ipaddress.ip_network(match.group(), strict=False)
+                    try: net = ipaddress.ip_network(match.group(), strict=False)
                     except ValueError: pass
-
-        if net and is_safe_ip(net):
-            valid_nets.add(net)
-
+        if net and is_safe_ip(net): valid_nets.add(net)
     return valid_nets
 
 def get_blocklists():
@@ -149,188 +118,121 @@ def get_blocklists():
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
         future_to_name = {executor.submit(fetch_url, name, url): name for name, url in BLOCKLISTS}
         for future in as_completed(future_to_name):
-            name = future_to_name[future]
             content = future.result()
             if content:
-                nets = parse_ips(name, content)
+                nets = parse_ips(future_to_name[future], content)
                 if nets:
-                    log.info(f"{name}: Downloaded {len(nets)} entries.")
+                    log.info(f"{future_to_name[future]}: {len(nets)}")
                     all_nets.extend(nets)
-                else:
-                    log.warning(f"{name}: Empty or invalid list.")
     return all_nets
 
 def optimize_and_filter(networks, whitelist):
     v4_nets = [n for n in networks if n.version == 4]
     v6_nets = [n for n in networks if n.version == 6]
-    whitelist_v4 = [ipaddress.ip_network(w, strict=False) for w in whitelist if ipaddress.ip_network(w, strict=False).version == 4]
-    whitelist_v6 = [ipaddress.ip_network(w, strict=False) for w in whitelist if ipaddress.ip_network(w, strict=False).version == 6]
-    def process_list(nets, wl_nets):
+    wl_v4 = [ipaddress.ip_network(w, strict=False) for w in whitelist if ipaddress.ip_network(w, strict=False).version == 4]
+    wl_v6 = [ipaddress.ip_network(w, strict=False) for w in whitelist if ipaddress.ip_network(w, strict=False).version == 6]
+
+    def process(nets, wl):
         if not nets: return []
         nets = list(ipaddress.collapse_addresses(nets))
-        results = []
+        clean = []
         for net in nets:
             candidates = [net]
-            for wl in wl_nets:
-                new_candidates = []
-                for candidate in candidates:
-                    if not candidate.overlaps(wl):
-                        new_candidates.append(candidate)
-                        continue
-                    if wl.supernet_of(candidate) or wl == candidate:
-                        continue
-                    try:
-                        subnets = list(candidate.address_exclude(wl))
-                        new_candidates.extend(subnets)
+            for w in wl:
+                new_cand = []
+                for c in candidates:
+                    if not c.overlaps(w): new_cand.append(c); continue
+                    if w.supernet_of(c) or w == c: continue
+                    try: new_cand.extend(c.address_exclude(w))
                     except ValueError: pass
-                candidates = new_candidates
+                candidates = new_cand
                 if not candidates: break
-            results.extend(candidates)
-        return list(ipaddress.collapse_addresses(results))
-    final_v4 = process_list(v4_nets, whitelist_v4)
-    final_v6 = process_list(v6_nets, whitelist_v6)
-    return final_v4 + final_v6
+            clean.extend(candidates)
+        return list(ipaddress.collapse_addresses(clean))
 
-# --- CROWDSEC SPECIFIC LOGIC ---
+    return process(v4_nets, wl_v4) + process(v6_nets, wl_v6)
 
+# --- CROWDSEC LOGIC ---
 def detect_mode():
-    """Detects if we should run native cscli or docker exec."""
+    """Robustly checks for cscli or Docker, handling missing commands."""
     # Try Native
     try:
-        subprocess.run(["cscli", "version"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
-        log.info("Mode: Native (cscli found)")
-        return "native"
-    except (FileNotFoundError, subprocess.CalledProcessError):
-        pass
+        if subprocess.run(["cscli", "version"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0:
+            log.info("Mode: Native (cscli found)")
+            return "native"
+    except FileNotFoundError:
+        pass # cscli not installed
 
     # Try Docker
     try:
-        res = subprocess.run(["docker", "ps", "-q", "-f", f"name=^{CROWDSEC_CONTAINER}$"], capture_output=True, text=True)
-        if res.stdout.strip():
+        if subprocess.run(["docker", "ps", "-q", "-f", f"name=^{CROWDSEC_CONTAINER}$"], stdout=subprocess.DEVNULL).returncode == 0:
             log.info(f"Mode: Docker (container: {CROWDSEC_CONTAINER})")
             return "docker"
     except FileNotFoundError:
-        pass
+        pass # docker command not found
 
     log.error("Could not detect CrowdSec (neither 'cscli' nor Docker container found).")
     sys.exit(1)
 
-def get_existing_decisions(mode):
-    """Fetches current bans from CrowdSec to avoid duplicates."""
-    cmd = []
-    if mode == "native":
-        cmd = ["cscli", "decisions", "list", "-a", "-o", "json"]
-    else:
-        cmd = ["docker", "exec", CROWDSEC_CONTAINER, "cscli", "decisions", "list", "-a", "-o", "json"]
+def flush_old_decisions(mode):
+    """Removes all previous blocklist decisions to prevent duplication/bloat."""
+    log.info("Flushing old blocklist decisions (Sync Mode)...")
+    cmd = ["cscli", "decisions", "delete", "--origin", "cscli-import"]
+    if mode == "docker": cmd = ["docker", "exec", CROWDSEC_CONTAINER] + cmd
 
-    log.info("Fetching existing decisions from CrowdSec...")
     try:
         res = subprocess.run(cmd, capture_output=True, text=True)
-        if res.returncode != 0:
-            log.warning("Failed to fetch existing decisions (this is normal on first run).")
-            return set()
-
-        if not res.stdout.strip() or res.stdout.strip() == "null":
-            return set()
-
-        data = json.loads(res.stdout)
-        existing_ips = set()
-        for item in data:
-            if "value" in item:
-                existing_ips.add(item["value"])
-
-        log.info(f"Found {len(existing_ips)} existing bans in DB.")
-        return existing_ips
-    except json.JSONDecodeError:
-        log.warning("Could not parse cscli output as JSON. Assuming empty.")
-        return set()
+        if res.returncode == 0:
+            log.info("✓ Old blocklist flushed.")
+        else:
+            log.warning(f"Flush warning (might be empty): {res.stderr.strip()}")
+    except Exception as e:
+        log.error(f"Error flushing decisions: {e}")
 
 def import_decisions(mode, new_nets):
-    """Imports the new IPs into CrowdSec."""
-    if not new_nets:
-        log.info("No new IPs to import.")
-        return
+    if not new_nets: return
+    log.info(f"Importing {len(new_nets)} new decisions...")
 
-    import_data = "\n".join(str(net) for net in new_nets)
-
-    base_cmd = ["decisions", "import", "-i", "-"]
-
-    # CrowdSec Flag
+    # Flags with COMMA fixed
     flags = [
         "--format", "values",
         "--duration", DECISION_DURATION,
         "--reason", "external_blocklist",
-        "--type", "ban"
+        "--type", "ban",
+        "--batch", "1000"
     ]
 
-    if mode == "native":
-        cmd = ["cscli"] + base_cmd + flags
-    else:
-        cmd = ["docker", "exec", "-i", CROWDSEC_CONTAINER, "cscli"] + base_cmd + flags
-
-    log.info(f"Importing {len(new_nets)} new decisions...")
+    cmd = ["cscli", "decisions", "import", "-i", "-"] + flags
+    if mode == "docker": cmd = ["docker", "exec", "-i", CROWDSEC_CONTAINER, "cscli", "decisions", "import", "-i", "-"] + flags
 
     try:
-        res = subprocess.run(cmd, input=import_data, text=True, capture_output=True)
-        if res.returncode == 0:
-            log.info("✓ Import successful.")
-        else:
-            log.error("Import failed.")
-            log.error(res.stderr)
-    except Exception as e:
-        log.error(f"Error during import: {e}")
-
-# --- MAIN ---
+        res = subprocess.run(cmd, input="\n".join(str(n) for n in new_nets), text=True, capture_output=True)
+        if res.returncode == 0: log.info("✓ Import successful.")
+        else: log.error(f"Import failed: {res.stderr}")
+    except Exception as e: log.error(f"Error: {e}")
 
 def main():
-    # File locking
-    lock_file = "/tmp/cs-import.lock"
-    if os.path.exists(lock_file):
-        try:
-            with open(lock_file, 'r') as f:
-                os.kill(int(f.read().strip()), 0)
-            log.error("Script already running. Exiting.")
-            sys.exit(1)
-        except:
-            os.remove(lock_file)
-    with open(lock_file, 'w') as f: f.write(str(os.getpid()))
-
+    if os.path.exists("/tmp/cs-import.lock"): sys.exit(1)
+    open("/tmp/cs-import.lock", "w").write(str(os.getpid()))
     try:
         mode = detect_mode()
 
+        # 1. Download
         log.info("Starting blocklist download...")
-        raw_nets = get_blocklists()
+        raw = get_blocklists()
+        if not raw: sys.exit(1)
 
-        if not raw_nets:
-            log.error("No IPs downloaded. Exiting.")
-            sys.exit(1)
+        # 2. Optimize
+        log.info("Optimizing...")
+        clean = optimize_and_filter(raw, CUSTOM_WHITELIST)
+        if len(clean) < MIN_IPS: log.error("Safety brake."); sys.exit(1)
 
-        log.info("Optimizing and cleaning lists...")
-        clean_nets = optimize_and_filter(raw_nets, CUSTOM_WHITELIST)
-
-        total_ips = len(clean_nets)
-        if total_ips < MIN_IPS:
-            log.error(f"Safety Brake: Only found {total_ips} IPs. Aborting.")
-            sys.exit(1)
-
-        # Deduplication
-        existing = get_existing_decisions(mode)
-
-        # Convert objects to strings for comparison
-        clean_nets_str = {str(n) for n in clean_nets}
-
-        # Subtract existing from new
-        new_to_import_str = clean_nets_str - existing
-
-        log.info(f"Total List: {len(clean_nets_str)} | Existing: {len(existing)} | New to Import: {len(new_to_import_str)}")
-
-        if new_to_import_str:
-            import_decisions(mode, new_to_import_str)
-        else:
-            log.info("Database is already up to date.")
+        # 3. SYNC (Flush & Replace)
+        flush_old_decisions(mode)
+        import_decisions(mode, clean)
 
     finally:
-        if os.path.exists(lock_file): os.remove(lock_file)
+        if os.path.exists("/tmp/cs-import.lock"): os.remove("/tmp/cs-import.lock")
 
 if __name__ == "__main__":
     main()
