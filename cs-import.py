@@ -230,7 +230,6 @@ def get_existing_decisions(mode):
             log.warning("Failed to fetch existing decisions (this is normal on first run).")
             return set()
 
-        # If output is empty or "null", return empty set
         if not res.stdout.strip() or res.stdout.strip() == "null":
             return set()
 
