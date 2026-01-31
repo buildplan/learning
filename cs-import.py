@@ -161,29 +161,35 @@ def get_blocklists():
     return all_nets
 
 def optimize_and_filter(networks, whitelist):
-    networks = list(ipaddress.collapse_addresses(networks))
-    whitelist_nets = [ipaddress.ip_network(w, strict=False) for w in whitelist]
-    final_list = []
-
-    for net in networks:
-        candidates = [net]
-        for wl in whitelist_nets:
-            if net.version != wl.version: continue
-            new_candidates = []
-            for candidate in candidates:
-                if not candidate.overlaps(wl):
-                    new_candidates.append(candidate)
-                    continue
-                if wl.supernet_of(candidate) or wl == candidate:
-                    continue
-                try:
-                    subnets = list(candidate.address_exclude(wl))
-                    new_candidates.extend(subnets)
-                except ValueError: pass
-            candidates = new_candidates
-            if not candidates: break
-        final_list.extend(candidates)
-    return list(ipaddress.collapse_addresses(final_list))
+    v4_nets = [n for n in networks if n.version == 4]
+    v6_nets = [n for n in networks if n.version == 6]
+    whitelist_v4 = [ipaddress.ip_network(w, strict=False) for w in whitelist if ipaddress.ip_network(w, strict=False).version == 4]
+    whitelist_v6 = [ipaddress.ip_network(w, strict=False) for w in whitelist if ipaddress.ip_network(w, strict=False).version == 6]
+    def process_list(nets, wl_nets):
+        if not nets: return []
+        nets = list(ipaddress.collapse_addresses(nets))
+        results = []
+        for net in nets:
+            candidates = [net]
+            for wl in wl_nets:
+                new_candidates = []
+                for candidate in candidates:
+                    if not candidate.overlaps(wl):
+                        new_candidates.append(candidate)
+                        continue
+                    if wl.supernet_of(candidate) or wl == candidate:
+                        continue
+                    try:
+                        subnets = list(candidate.address_exclude(wl))
+                        new_candidates.extend(subnets)
+                    except ValueError: pass
+                candidates = new_candidates
+                if not candidates: break
+            results.extend(candidates)
+        return list(ipaddress.collapse_addresses(results))
+    final_v4 = process_list(v4_nets, whitelist_v4)
+    final_v6 = process_list(v6_nets, whitelist_v6)
+    return final_v4 + final_v6
 
 # --- CROWDSEC SPECIFIC LOGIC ---
 
