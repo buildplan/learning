@@ -29,8 +29,9 @@ TIMEOUT = 15             # Seconds per request
 RETRIES = 3
 DECISION_DURATION = "24h"
 CROWDSEC_CONTAINER = "crowdsec" # Name of container if using Docker
+IMPORT_ORIGIN = "cscli-import"  # The origin assigned automatically by cscli import
 
-# Custom Whitelist (IPs or CIDRs)
+# Custom Whitelist
 CUSTOM_WHITELIST = [
     "1.1.1.1", "8.8.8.8", "::1",
     "2001:4860:4860::8888", "2606:4700:4700::1111"
@@ -155,45 +156,49 @@ def optimize_and_filter(networks, whitelist):
 # --- CROWDSEC LOGIC ---
 def detect_mode():
     """Robustly checks for cscli or Docker, handling missing commands."""
-    # Try Native
     try:
         if subprocess.run(["cscli", "version"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0:
             log.info("Mode: Native (cscli found)")
             return "native"
-    except FileNotFoundError:
-        pass # cscli not installed
+    except FileNotFoundError: pass
 
-    # Try Docker
     try:
         if subprocess.run(["docker", "ps", "-q", "-f", f"name=^{CROWDSEC_CONTAINER}$"], stdout=subprocess.DEVNULL).returncode == 0:
             log.info(f"Mode: Docker (container: {CROWDSEC_CONTAINER})")
             return "docker"
-    except FileNotFoundError:
-        pass # docker command not found
+    except FileNotFoundError: pass
 
     log.error("Could not detect CrowdSec (neither 'cscli' nor Docker container found).")
     sys.exit(1)
 
+def check_lapi_health(mode):
+    """Pre-flight check to ensure CrowdSec LAPI is reachable via standard status check."""
+    cmd = ["cscli", "lapi", "status"]
+    if mode == "docker": cmd = ["docker", "exec", CROWDSEC_CONTAINER] + cmd
+
+    try:
+        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+        return True
+    except subprocess.CalledProcessError:
+        log.error("CrowdSec LAPI is not ready (cscli lapi status failed). Aborting.")
+        sys.exit(1)
+
 def flush_old_decisions(mode):
-    """Removes all previous blocklist decisions to prevent duplication/bloat."""
-    log.info("Flushing old blocklist decisions (Sync Mode)...")
-    cmd = ["cscli", "decisions", "delete", "--origin", "cscli-import"]
+    """Removes all previous blocklist decisions."""
+    log.info(f"Flushing old decisions (Origin: {IMPORT_ORIGIN})...")
+    cmd = ["cscli", "decisions", "delete", "--origin", IMPORT_ORIGIN]
     if mode == "docker": cmd = ["docker", "exec", CROWDSEC_CONTAINER] + cmd
 
     try:
         res = subprocess.run(cmd, capture_output=True, text=True)
-        if res.returncode == 0:
-            log.info("✓ Old blocklist flushed.")
-        else:
-            log.warning(f"Flush warning (might be empty): {res.stderr.strip()}")
-    except Exception as e:
-        log.error(f"Error flushing decisions: {e}")
+        if res.returncode == 0: log.info("✓ Flush successful.")
+        else: log.warning(f"Flush warning: {res.stderr.strip()}")
+    except Exception as e: log.error(f"Error flushing: {e}")
 
 def import_decisions(mode, new_nets):
     if not new_nets: return
     log.info(f"Importing {len(new_nets)} new decisions...")
 
-    # Flags with COMMA fixed
     flags = [
         "--format", "values",
         "--duration", DECISION_DURATION,
@@ -211,28 +216,43 @@ def import_decisions(mode, new_nets):
         else: log.error(f"Import failed: {res.stderr}")
     except Exception as e: log.error(f"Error: {e}")
 
+# --- LOCKING ---
+def acquire_lock():
+    lock_file = "/tmp/cs-import.lock"
+    if os.path.exists(lock_file):
+        try:
+            with open(lock_file, 'r') as f:
+                pid = int(f.read().strip())
+            os.kill(pid, 0)
+            log.error(f"Script already running (PID {pid}). Exiting.")
+            sys.exit(1)
+        except (OSError, ValueError):
+            log.warning("Found stale lock file. Removing.")
+            os.remove(lock_file)
+    with open(lock_file, 'w') as f: f.write(str(os.getpid()))
+
+def release_lock():
+    if os.path.exists("/tmp/cs-import.lock"): os.remove("/tmp/cs-import.lock")
+
 def main():
-    if os.path.exists("/tmp/cs-import.lock"): sys.exit(1)
-    open("/tmp/cs-import.lock", "w").write(str(os.getpid()))
+    acquire_lock()
     try:
         mode = detect_mode()
+        check_lapi_health(mode)
 
-        # 1. Download
         log.info("Starting blocklist download...")
         raw = get_blocklists()
         if not raw: sys.exit(1)
 
-        # 2. Optimize
         log.info("Optimizing...")
         clean = optimize_and_filter(raw, CUSTOM_WHITELIST)
-        if len(clean) < MIN_IPS: log.error("Safety brake."); sys.exit(1)
+        if len(clean) < MIN_IPS: log.error("Safety brake triggered (Too few IPs)."); sys.exit(1)
 
-        # 3. SYNC (Flush & Replace)
         flush_old_decisions(mode)
         import_decisions(mode, clean)
 
     finally:
-        if os.path.exists("/tmp/cs-import.lock"): os.remove("/tmp/cs-import.lock")
+        release_lock()
 
 if __name__ == "__main__":
     main()
