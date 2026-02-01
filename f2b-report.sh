@@ -8,15 +8,15 @@ F2B_DB="/var/lib/fail2ban/fail2ban.sqlite3"
 
 # --- Data Gathering ---
 
-# Total unique bans in the last 7 days (using timeofban)
+# Total unique bans (last 7 days)
 WEEKLY_BANS=$(sqlite3 $F2B_DB \
 "SELECT count(*) FROM bans WHERE timeofban > strftime('%s', 'now', '-7 days');")
 
-# Most active jail in the last 7 days
-TOP_JAIL=$(sqlite3 $F2B_DB \
-"SELECT jail FROM bans WHERE timeofban > strftime('%s', 'now', '-7 days') GROUP BY jail ORDER BY count(*) DESC LIMIT 1;")
+# Per-Jail Totals (last 7 days)
+JAIL_STATS=$(sqlite3 $F2B_DB \
+"SELECT jail || ': ' || count(*) FROM bans WHERE timeofban > strftime('%s', 'now', '-7 days') GROUP BY jail ORDER BY count(*) DESC;")
 
-# The single IP with the most bans this week
+# Single IP with the most bans this week
 TOP_IP=$(sqlite3 $F2B_DB \
 "SELECT ip FROM bans WHERE timeofban > strftime('%s', 'now', '-7 days') GROUP BY ip ORDER BY count(*) DESC LIMIT 1;")
 
@@ -25,8 +25,11 @@ TOP_IP=$(sqlite3 $F2B_DB \
 MESSAGE="🛡️ Fail2Ban Weekly Security Report
 --------------------------------
 ✅ Total IPs Banned: $WEEKLY_BANS
-🔥 Most Active Jail: ${TOP_JAIL:-None}
 📍 Top Offender: ${TOP_IP:-None}
+
+📊 Breakdown by Jail:
+${JAIL_STATS:-No activity this week}
+
 💻 Host: $(hostname)"
 
 # --- Send Notification ---
