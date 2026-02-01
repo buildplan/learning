@@ -435,7 +435,7 @@ sudo ss -tlnup | grep ':53'
 
 ***
 
-**If systemd-resolved doesn't exist on the system:**
+## If systemd-resolved doesn't exist on the system
 
 ```bash
 # Check if systemd-resolved is installed
