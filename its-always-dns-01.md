@@ -435,6 +435,33 @@ sudo ss -tlnup | grep ':53'
 
 ***
 
+**If systemd-resolved doesn't exist on the system:**
+
+```bash
+# Check if systemd-resolved is installed
+systemctl status systemd-resolved
+
+# If "Unit could not be found":
+# Create static resolv.conf
+sudo rm -f /etc/resolv.conf
+sudo tee /etc/resolv.conf > /dev/null << 'EOF'
+nameserver 1.1.1.1
+nameserver 8.8.8.8
+nameserver 9.9.9.9
+EOF
+
+# Make it immutable
+sudo chattr +i /etc/resolv.conf
+
+# Disable Tailscale DNS
+sudo tailscale set --accept-dns=false
+
+# Test
+curl -v ip.me
+```
+
+***
+
 ## Common Issues and Solutions
 
 ### Issue: "communications error to 127.0.0.53\#53: timed out"
