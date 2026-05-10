@@ -5,7 +5,7 @@ Create `/etc/fail2ban/jail.local`
 ```ini
 [DEFAULT]
 # Local networks and Docker
-ignoreip = 127.0.0.1/8 ::1 fe80::/10 172.80.0.0/16 172.16.0.0/12 10.0.0.0/8
+ignoreip = 127.0.0.1/8 ::1 fe80::/10 172.16.0.0/12 10.0.0.0/8 192.168.0.0/16
 # Tailscale ranges
            100.64.0.0/10 fd7a:115c:a1e0::/48
 # Cloudflare IPv4
